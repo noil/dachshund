@@ -4,9 +4,9 @@ Library `dachshund` implements a simple  workers pool which use buffered channel
 
 ## Features:
 
-Recycling the number of workers automatically
-Changing (increase/descrease) the number of workers on the fly, without restarting or stopping the service
-Changing (increase/descrease) queue buffer size on the fly, without restarting or stopping the service
+- Recycling the number of workers automatically
+- Changing (increase/descrease) the number of workers on the fly, without restarting or stopping the service
+- Changing (increase/descrease) queue buffer size on the fly, without restarting or stopping the service
 
 ### Installation
 
