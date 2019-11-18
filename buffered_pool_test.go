@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-type Task1 struct {
+type BTask1 struct {
 	result chan interface{}
 }
 
-func (s *Task1) Do(data interface{}) {
+func (s *BTask1) Do(data interface{}) {
 	switch v := data.(type) {
 	case int:
 		s.result <- v * v
@@ -30,11 +30,11 @@ func (s *Task1) Do(data interface{}) {
 	}
 }
 
-type Task2 struct {
+type BTask2 struct {
 	result chan interface{}
 }
 
-func (s *Task2) Do(data interface{}) {
+func (s *BTask2) Do(data interface{}) {
 	switch v := data.(type) {
 	case int:
 		s.result <- v * 2
@@ -53,29 +53,24 @@ func (s *Task2) Do(data interface{}) {
 	}
 }
 
-type Task3 struct{}
+type BTask3 struct{}
 
-func (s *Task3) Do(data interface{}) {
+func (s *BTask3) Do(data interface{}) {
 	fmt.Println("task 3 has recieved data")
 	time.Sleep(time.Duration(10) * time.Millisecond)
 }
 
-type Task4 struct{}
+type BTask4 struct{}
 
-func (s *Task4) Do(data interface{}) {
+func (s *BTask4) Do(data interface{}) {
 	fmt.Println("task 4 has recieved data")
 	time.Sleep(time.Duration(20) * time.Millisecond)
 }
 
-func TestNewPool(t *testing.T) {
-	task := &Task1{result: make(chan interface{}, 20)}
-	p := NewPool(10, task)
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
+func TestNewBufferedPool(t *testing.T) {
+	task := &BTask1{result: make(chan interface{}, 20)}
+	p := NewBufferedPool(10, 20, task)
+	defer p.Release()
 	i := 2
 	p.Do(i)
 	result := <-task.result
@@ -98,15 +93,10 @@ func TestNewPool(t *testing.T) {
 	}
 }
 
-func TestReload(t *testing.T) {
-	task := &Task3{}
-	p := NewPool(1, task)
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
+func TestReloadBuffered(t *testing.T) {
+	task := &BTask3{}
+	p := NewBufferedPool(1, 2, task)
+	defer p.Release()
 	go func() {
 		i := 1
 		for {
@@ -115,7 +105,7 @@ func TestReload(t *testing.T) {
 				if i > 5 {
 					break
 				}
-				err := p.Reload(i, task)
+				err := p.Reload(i, i*2, task)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -129,20 +119,15 @@ func TestReload(t *testing.T) {
 	}
 }
 
-func TestReloadTask(t *testing.T) {
-	task3 := &Task3{}
-	task4 := &Task4{}
-	p := NewPool(10, task3)
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
+func TestReloadTaskBuffered(t *testing.T) {
+	task3 := &BTask3{}
+	task4 := &BTask4{}
+	p := NewBufferedPool(10, 20, task3)
+	defer p.Release()
 	go func() {
 		select {
 		case <-time.After(500 * time.Millisecond):
-			err := p.Reload(10, task4)
+			err := p.Reload(10, 20, task4)
 			if err != nil {
 				fmt.Println(err)
 			}

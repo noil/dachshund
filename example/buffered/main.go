@@ -32,13 +32,18 @@ queueBuffSize: 20
 `)
 	viper.ReadConfig(bytes.NewBuffer(yamlExample))
 
-	d := &Demo{}
-	pool := dachshund.NewPool(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), d)
-	defer pool.Release()
+	demo := &Demo{}
+	pool := dachshund.NewBufferedPool(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo)
+	defer func() {
+		err := pool.Release()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
 
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		pool.Reload(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), d)
+		pool.Reload(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo)
 	})
 
 	for i := 0; i < 1000000; i++ {
@@ -47,5 +52,5 @@ queueBuffSize: 20
 		wg.Wait()
 	}
 
-	fmt.Println(d.count)
+	fmt.Println(demo.count)
 }

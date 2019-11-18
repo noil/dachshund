@@ -19,7 +19,7 @@ func (s *Demo) Do(data interface{}) {
 }
 
 func BenchmarkConcurrent(b *testing.B) {
-	p := NewPool(100, 2000, &Demo{})
+	p := NewBufferedPool(100, 2000, &Demo{})
 	defer p.Release()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {

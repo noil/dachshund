@@ -1,12 +1,13 @@
 ## Introduction
 
-Library `dachshund` implements a simple  workers pool which use buffered channel for recieving new tasks.
+Library `dachshund` implements a simple  workers pool. You could use it as buffered pool for recieving new tasks or as classic pool without buffering.
 
 ## Features:
 
 - Recycling the number of workers automatically
 - Changing (increase/descrease) the number of workers on the fly, without restarting or stopping the service
-- Changing (increase/descrease) queue buffer size on the fly, without restarting or stopping the service
+- Changing (increase/descrease) queue buffer size on the fly, without restarting or stopping the service. If use buffered pool
+- Changing method which pool calls on the fly
 
 ### Installation
 
@@ -45,11 +46,19 @@ func (f *Foo) Do(data interface{}) {
 
 func main() {
 	f := &Foo{}
-	pool := dachshund.NewPool(5, 10, f)
-    defer pool.Release()
+	bp := dachshund.NewBufferedPool(5, 10, f)
+    defer bp.Release()
     for i := 0; i < 1000000; i++ {
 		wg.Add(1)
-		pool.Do(i)
+		bp.Do(i)
+		wg.Wait()
+	}
+
+	p := dachshund.NewPool(5, f)
+    defer p.Release()
+    for i := 0; i < 1000000; i++ {
+		wg.Add(1)
+		p.Do(i)
 		wg.Wait()
 	}
 }
