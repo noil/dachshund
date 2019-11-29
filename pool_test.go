@@ -99,8 +99,7 @@ func TestNewPool(t *testing.T) {
 }
 
 func TestReload(t *testing.T) {
-	task := &Task3{}
-	p := NewPool(1, task)
+	p := NewPool(1, &Task3{})
 	defer func() {
 		err := p.Release()
 		if err != nil {
@@ -115,7 +114,7 @@ func TestReload(t *testing.T) {
 				if i > 5 {
 					break
 				}
-				err := p.Reload(i, task)
+				err := p.Reload(i, &Task3{})
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -130,9 +129,7 @@ func TestReload(t *testing.T) {
 }
 
 func TestReloadTask(t *testing.T) {
-	task3 := &Task3{}
-	task4 := &Task4{}
-	p := NewPool(10, task3)
+	p := NewPool(10, &Task3{})
 	defer func() {
 		err := p.Release()
 		if err != nil {
@@ -142,7 +139,7 @@ func TestReloadTask(t *testing.T) {
 	go func() {
 		select {
 		case <-time.After(500 * time.Millisecond):
-			err := p.Reload(10, task4)
+			err := p.Reload(10, &Task4{})
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -152,4 +149,29 @@ func TestReloadTask(t *testing.T) {
 		p.Do(i)
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+type PanicTask struct{}
+
+func (s *PanicTask) Do(data interface{}) {
+	if value, ok := data.(string); ok {
+		fmt.Println(value)
+	} else {
+		panic("invalid type")
+	}
+}
+
+func TestPanic(t *testing.T) {
+	p := NewPool(10, &PanicTask{})
+	defer func() {
+		err := p.Release()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	for i := 0; i < 20; i++ {
+		p.Do(i)
+	}
+	p.Do("i was born")
 }

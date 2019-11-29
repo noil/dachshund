@@ -13,6 +13,7 @@ var (
 
 type worker struct {
 	job            Pooler
+	jobVersion     int32
 	dispatcherChan chan chan interface{}
 	jobQueueChan   chan interface{}
 	sync.WaitGroup
@@ -21,6 +22,7 @@ type worker struct {
 
 type Pool struct {
 	job                Pooler
+	jobVersion         int32
 	numOfWorkers       int32
 	actualNumOfWorkers int32
 	dispatcherChan     chan chan interface{}
@@ -88,6 +90,7 @@ func (pool *Pool) worker() {
 	defer pool.Unlock()
 	w := &worker{
 		job:            pool.job,
+		jobVersion:     atomic.LoadInt32(&pool.jobVersion),
 		dispatcherChan: pool.dispatcherChan,
 		jobQueueChan:   make(chan interface{}),
 	}
@@ -96,22 +99,30 @@ func (pool *Pool) worker() {
 	go func() {
 	Loop:
 		for {
-			pool.RLock()
-			if pool.job != w.job {
+			if atomic.LoadInt32(&pool.jobVersion) != atomic.LoadInt32(&w.jobVersion) {
+				pool.RLock()
 				w.Lock()
 				w.job = pool.job
 				w.Unlock()
+				pool.RUnlock()
 			}
-			pool.RUnlock()
+
 			w.dispatcherChan <- w.jobQueueChan
 			data := <-w.jobQueueChan
 			if nil == data && 1 == atomic.LoadInt32(&pool.isDisableWorker) {
 				pool.Done()
 				break Loop
 			}
-			w.job.Do(data)
+			w.do(data)
 		}
 	}()
+}
+
+func (w *worker) do(data interface{}) {
+	defer func() {
+		_ = recover()
+	}()
+	w.job.Do(data)
 }
 
 func (pool *Pool) stopWorker() {

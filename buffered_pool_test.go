@@ -56,14 +56,14 @@ func (s *BTask2) Do(data interface{}) {
 type BTask3 struct{}
 
 func (s *BTask3) Do(data interface{}) {
-	fmt.Println("task 3 has recieved data")
+	fmt.Println("buffered task 3 has recieved data")
 	time.Sleep(time.Duration(10) * time.Millisecond)
 }
 
 type BTask4 struct{}
 
 func (s *BTask4) Do(data interface{}) {
-	fmt.Println("task 4 has recieved data")
+	fmt.Println("buffered task 4 has recieved data")
 	time.Sleep(time.Duration(20) * time.Millisecond)
 }
 
@@ -120,14 +120,12 @@ func TestReloadBuffered(t *testing.T) {
 }
 
 func TestReloadTaskBuffered(t *testing.T) {
-	task3 := &BTask3{}
-	task4 := &BTask4{}
-	p := NewBufferedPool(10, 20, task3)
+	p := NewBufferedPool(10, 20, &BTask3{})
 	defer p.Release()
 	go func() {
 		select {
 		case <-time.After(500 * time.Millisecond):
-			err := p.Reload(10, 20, task4)
+			err := p.Reload(10, 20, &BTask4{})
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -137,4 +135,29 @@ func TestReloadTaskBuffered(t *testing.T) {
 		p.Do(i)
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+type PanicTaskBuffered struct{}
+
+func (s *PanicTaskBuffered) Do(data interface{}) {
+	if value, ok := data.(string); ok {
+		fmt.Println(value)
+	} else {
+		panic("invalid type")
+	}
+}
+
+func TestPanicBuffered(t *testing.T) {
+	p := NewBufferedPool(10, 20, &PanicTaskBuffered{})
+	defer func() {
+		err := p.Release()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		p.Do(i)
+	}
+	p.Do("buffered. i was born")
 }

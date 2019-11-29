@@ -117,8 +117,18 @@ func (pool *BufferedPool) worker() {
 			pool.Done()
 			return
 		}
-		pool.job.Do(data)
+		pool.doTask(data)
 	}
+}
+
+func (pool *BufferedPool) doTask(data interface{}) {
+	defer func() {
+		_ = recover()
+		// if r := recover(); r != nil {
+		//   fmt.Printf("Task has been failed. Reciving data - %v. Error - %s\n", data, r)
+		// }
+	}()
+	pool.job.Do(data)
 }
 
 func (pool *BufferedPool) dispatcher() {
