@@ -124,9 +124,6 @@ func (pool *BufferedPool) worker() {
 func (pool *BufferedPool) doTask(data interface{}) {
 	defer func() {
 		_ = recover()
-		// if r := recover(); r != nil {
-		//   fmt.Printf("Task has been failed. Reciving data - %v. Error - %s\n", data, r)
-		// }
 	}()
 	pool.job.Do(data)
 }
