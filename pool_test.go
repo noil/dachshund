@@ -56,14 +56,14 @@ func (s *Task2) Do(data interface{}) {
 type Task3 struct{}
 
 func (s *Task3) Do(data interface{}) {
-	fmt.Println("task 3 has recieved data")
+	// fmt.Println("task 3 has recieved data")
 	time.Sleep(time.Duration(10) * time.Millisecond)
 }
 
 type Task4 struct{}
 
 func (s *Task4) Do(data interface{}) {
-	fmt.Println("task 4 has recieved data")
+	// fmt.Println("task 4 has recieved data")
 	time.Sleep(time.Duration(20) * time.Millisecond)
 }
 
@@ -108,11 +108,12 @@ func TestReload(t *testing.T) {
 	}()
 	go func() {
 		i := 1
+	Loop:
 		for {
 			select {
 			case <-time.After(300 * time.Millisecond):
 				if i > 5 {
-					break
+					break Loop
 				}
 				err := p.Reload(i, &Task3{})
 				if err != nil {
@@ -144,8 +145,9 @@ func TestReloadTask(t *testing.T) {
 				fmt.Println(err)
 			}
 		}
+		fmt.Println("Reloaded task complite successfully")
 	}()
-	for i := 0; i <= 50; i++ {
+	for i := 0; i <= 100; i++ {
 		p.Do(i)
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -164,6 +166,7 @@ func (s *PanicTask) Do(data interface{}) {
 func TestPanic(t *testing.T) {
 	p := NewPool(10, &PanicTask{})
 	defer func() {
+		fmt.Println("close testPanic func")
 		err := p.Release()
 		if err != nil {
 			fmt.Println(err)

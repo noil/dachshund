@@ -75,6 +75,7 @@ func (pool *Pool) Reload(number int, job Pooler) error {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 	if pool.job != job {
 		pool.job = job
+		atomic.AddInt32(&pool.jobVersion, 1)
 	}
 	atomic.AddInt32(&pool.isDisable, -1)
 
@@ -103,6 +104,7 @@ func (pool *Pool) worker() {
 				pool.RLock()
 				w.Lock()
 				w.job = pool.job
+				atomic.StoreInt32(&w.jobVersion, atomic.LoadInt32(&pool.jobVersion))
 				w.Unlock()
 				pool.RUnlock()
 			}
@@ -142,7 +144,9 @@ func (pool *Pool) dispatcher() {
 				break Loop
 			default:
 				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.worker()
+					if 0 == atomic.LoadInt32(&pool.isDisable) {
+						pool.worker()
+					}
 				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
 					pool.stopWorker()
 				}

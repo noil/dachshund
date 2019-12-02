@@ -56,14 +56,14 @@ func (s *BTask2) Do(data interface{}) {
 type BTask3 struct{}
 
 func (s *BTask3) Do(data interface{}) {
-	fmt.Println("buffered task 3 has recieved data")
+	// fmt.Println("buffered task 3 has recieved data")
 	time.Sleep(time.Duration(10) * time.Millisecond)
 }
 
 type BTask4 struct{}
 
 func (s *BTask4) Do(data interface{}) {
-	fmt.Println("buffered task 4 has recieved data")
+	// fmt.Println("buffered task 4 has recieved data")
 	time.Sleep(time.Duration(20) * time.Millisecond)
 }
 
