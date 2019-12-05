@@ -8,6 +8,8 @@ import (
 	"github.com/noil/dachshund"
 )
 
+const SIZE = 1000000
+
 var wg sync.WaitGroup
 
 type Demo struct {
@@ -24,17 +26,19 @@ func (d *Demo) Do(data interface{}) {
 func main() {
 	demo := &Demo{}
 	pool := dachshund.NewPool(10, demo)
-	defer func() {
-		err := pool.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
-	for i := 0; i < 1000000; i++ {
-		wg.Add(1)
+	// ctx, cancel := context.WithCancel(context.Background())
+	// pool := dachshund.NewPoolWithContext(ctx, 10, demo)
+
+	defer pool.Release()
+	// defer func() {
+	// 	cancel()
+	// 	time.Sleep(time.Second * 2)
+	// }()
+	wg.Add(SIZE)
+	for i := 0; i < SIZE; i++ {
 		pool.Do(i)
-		wg.Wait()
 	}
+	wg.Wait()
 
 	fmt.Println(demo.count)
 }

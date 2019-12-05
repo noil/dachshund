@@ -6,24 +6,24 @@ import (
 )
 
 const (
-	RunTimes   = 1000000
-	BenchParam = 10
+	BuffRunTimes   = 1000000
+	BuffBenchParam = 10
 )
 
-type Demo struct {
+type BuffDemo struct {
 	r int
 }
 
-func (s *Demo) Do(data interface{}) {
-	time.Sleep(time.Duration(BenchParam) * time.Millisecond)
+func (s *BuffDemo) Do(data interface{}) {
+	time.Sleep(time.Duration(BuffBenchParam) * time.Millisecond)
 }
 
-func BenchmarkConcurrent(b *testing.B) {
+func BenchmarkBufferedConcurrent(b *testing.B) {
 	p := NewBufferedPool(100, 2000, &Demo{})
 	defer p.Release()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
-		for i := 0; i < RunTimes; i++ {
+		for i := 0; i < BuffRunTimes; i++ {
 			p.Do(i)
 			i++
 		}

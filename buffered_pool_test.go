@@ -70,7 +70,13 @@ func (s *BTask4) Do(data interface{}) {
 func TestNewBufferedPool(t *testing.T) {
 	task := &BTask1{result: make(chan interface{}, 20)}
 	p := NewBufferedPool(10, 20, task)
-	defer p.Release()
+	defer func() {
+		err := p.Release()
+		if nil != err {
+			t.Error(err)
+		}
+		fmt.Println("test new buffered pool has finished")
+	}()
 	i := 2
 	p.Do(i)
 	result := <-task.result
@@ -96,21 +102,21 @@ func TestNewBufferedPool(t *testing.T) {
 func TestReloadBuffered(t *testing.T) {
 	task := &BTask3{}
 	p := NewBufferedPool(1, 2, task)
-	defer p.Release()
+	defer func() {
+		err := p.Release()
+		if nil != err {
+			t.Error(err)
+		}
+		fmt.Println("test reload buffered has finished")
+	}()
 	go func() {
-		i := 1
-		for {
-			select {
-			case <-time.After(300 * time.Millisecond):
-				if i > 5 {
-					break
-				}
-				err := p.Reload(i, i*2, task)
-				if err != nil {
-					fmt.Println(err)
-				}
-				i++
+		for i := 1; i < 5; i++ {
+			<-time.After(300 * time.Millisecond)
+			err := p.Reload(i, i*2, task)
+			if err != nil {
+				fmt.Println(err)
 			}
+			i++
 		}
 	}()
 	for i := 0; i <= 100; i++ {
@@ -121,14 +127,18 @@ func TestReloadBuffered(t *testing.T) {
 
 func TestReloadTaskBuffered(t *testing.T) {
 	p := NewBufferedPool(10, 20, &BTask3{})
-	defer p.Release()
+	defer func() {
+		err := p.Release()
+		if nil != err {
+			t.Error(err)
+		}
+		fmt.Println("test reload task buffered pool has finished")
+	}()
 	go func() {
-		select {
-		case <-time.After(500 * time.Millisecond):
-			err := p.Reload(10, 20, &BTask4{})
-			if err != nil {
-				fmt.Println(err)
-			}
+		<-time.After(500 * time.Millisecond)
+		err := p.Reload(10, 20, &BTask4{})
+		if err != nil {
+			fmt.Println(err)
 		}
 	}()
 	for i := 0; i <= 50; i++ {
@@ -151,9 +161,10 @@ func TestPanicBuffered(t *testing.T) {
 	p := NewBufferedPool(10, 20, &PanicTaskBuffered{})
 	defer func() {
 		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
+		if nil != err {
+			t.Error(err)
 		}
+		fmt.Println("test panic buffered has finished")
 	}()
 
 	for i := 0; i < 200; i++ {

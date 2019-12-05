@@ -53,29 +53,19 @@ func (s *Task2) Do(data interface{}) {
 	}
 }
 
-type Task3 struct{}
+type Task3 struct {
+}
 
 func (s *Task3) Do(data interface{}) {
 	// fmt.Println("task 3 has recieved data")
 	time.Sleep(time.Duration(10) * time.Millisecond)
 }
 
-type Task4 struct{}
-
-func (s *Task4) Do(data interface{}) {
-	// fmt.Println("task 4 has recieved data")
-	time.Sleep(time.Duration(20) * time.Millisecond)
-}
-
 func TestNewPool(t *testing.T) {
+	fmt.Println("test new pool has launched")
 	task := &Task1{result: make(chan interface{}, 20)}
 	p := NewPool(10, task)
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
+	defer p.Release()
 	i := 2
 	p.Do(i)
 	result := <-task.result
@@ -86,6 +76,7 @@ func TestNewPool(t *testing.T) {
 			"got", value,
 		)
 	}
+
 	s := "Hello World!"
 	p.Do(s)
 	result = <-task.result
@@ -99,53 +90,17 @@ func TestNewPool(t *testing.T) {
 }
 
 func TestReload(t *testing.T) {
-	p := NewPool(1, &Task3{})
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
-	go func() {
-		i := 1
-	Loop:
-		for {
-			select {
-			case <-time.After(300 * time.Millisecond):
-				if i > 5 {
-					break Loop
-				}
-				err := p.Reload(i, &Task3{})
-				if err != nil {
-					fmt.Println(err)
-				}
-				i++
-			}
-		}
-	}()
-	for i := 0; i <= 100; i++ {
-		p.Do(i)
-		time.Sleep(20 * time.Millisecond)
-	}
-}
+	fmt.Println("test reload has launched")
+	task3 := &Task3{}
+	p := NewPool(1, task3)
+	defer p.Release()
 
-func TestReloadTask(t *testing.T) {
-	p := NewPool(10, &Task3{})
-	defer func() {
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
 	go func() {
-		select {
-		case <-time.After(500 * time.Millisecond):
-			err := p.Reload(10, &Task4{})
-			if err != nil {
-				fmt.Println(err)
-			}
+		for i := 1; i < 5; i++ {
+			<-time.After(300 * time.Millisecond)
+			p.Reload(i)
+			i++
 		}
-		fmt.Println("Reloaded task complite successfully")
 	}()
 	for i := 0; i <= 100; i++ {
 		p.Do(i)
@@ -165,13 +120,7 @@ func (s *PanicTask) Do(data interface{}) {
 
 func TestPanic(t *testing.T) {
 	p := NewPool(10, &PanicTask{})
-	defer func() {
-		fmt.Println("close testPanic func")
-		err := p.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
+	defer p.Release()
 
 	for i := 0; i < 20; i++ {
 		p.Do(i)

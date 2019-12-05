@@ -1,46 +1,39 @@
 package dachshund
 
 import (
-	"errors"
-	"sync"
+	"context"
 	"sync/atomic"
-)
-
-var (
-	ErrReleasePool          = errors.New("can't release pool, try it latter.")
-	ErrReloadPoolInProgress = errors.New("can't reload pool, try it latter.")
 )
 
 type worker struct {
 	job            Pooler
-	jobVersion     int32
 	dispatcherChan chan chan interface{}
 	jobQueueChan   chan interface{}
-	sync.WaitGroup
-	sync.RWMutex
 }
 
 type Pool struct {
-	job                Pooler
-	jobVersion         int32
-	numOfWorkers       int32
-	actualNumOfWorkers int32
-	dispatcherChan     chan chan interface{}
-	isDisable          int32
-	isDisableWorker    int32
-	closedChan         chan struct{}
-	sync.WaitGroup
-	sync.RWMutex
+	job                 Pooler
+	numOfWorkers        int32
+	actualNumOfWorkers  int32
+	dispatcherChan      chan chan interface{}
+	isDisableWorker     int32
+	determinatePoolChan chan struct{}
+	closedPoolChan      chan struct{}
 }
 
 func NewPool(number int, job Pooler) *Pool {
+	return NewPoolWithContext(context.Background(), number, job)
+}
+
+func NewPoolWithContext(ctx context.Context, number int, job Pooler) *Pool {
 	pool := &Pool{
-		job:            job,
-		numOfWorkers:   int32(number),
-		dispatcherChan: make(chan chan interface{}),
-		closedChan:     make(chan struct{}),
+		job:                 job,
+		numOfWorkers:        int32(number),
+		dispatcherChan:      make(chan chan interface{}),
+		determinatePoolChan: make(chan struct{}),
+		closedPoolChan:      make(chan struct{}),
 	}
-	pool.dispatcher()
+	pool.dispatcher(ctx)
 
 	return pool
 }
@@ -49,49 +42,18 @@ func (pool *Pool) Do(data interface{}) {
 	(<-pool.dispatcherChan) <- data
 }
 
-func (pool *Pool) Release() error {
-	if 1 == atomic.LoadInt32(&pool.isDisable) {
-		return ErrReleasePool
-	}
-	atomic.AddInt32(&pool.isDisable, 1)
-	actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-	pool.Add(int(actualNumOfWorkers))
-	atomic.SwapInt32(&pool.numOfWorkers, 0)
-	pool.Wait()
-	pool.Add(1)
-	pool.closedChan <- struct{}{}
-	pool.Wait()
-
-	return nil
+func (pool *Pool) Release() {
+	pool.determinatePoolChan <- struct{}{}
+	<-pool.closedPoolChan
 }
 
-func (pool *Pool) Reload(number int, job Pooler) error {
-	pool.Lock()
-	defer pool.Unlock()
-	if 1 == atomic.LoadInt32(&pool.isDisable) {
-		return ErrReloadPoolInProgress
-	}
-	atomic.AddInt32(&pool.isDisable, 1)
+func (pool *Pool) Reload(number int) {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
-	if pool.job != job {
-		pool.job = job
-		atomic.AddInt32(&pool.jobVersion, 1)
-	}
-	atomic.AddInt32(&pool.isDisable, -1)
-
-	return nil
 }
 
-func (pool *Pool) worker() {
-	isDisable := atomic.LoadInt32(&pool.isDisable)
-	if 1 == isDisable {
-		return
-	}
-	pool.Lock()
-	defer pool.Unlock()
+func (pool *Pool) startWorker(ctx context.Context) {
 	w := &worker{
 		job:            pool.job,
-		jobVersion:     atomic.LoadInt32(&pool.jobVersion),
 		dispatcherChan: pool.dispatcherChan,
 		jobQueueChan:   make(chan interface{}),
 	}
@@ -100,27 +62,19 @@ func (pool *Pool) worker() {
 	go func() {
 	Loop:
 		for {
-			if atomic.LoadInt32(&pool.jobVersion) != atomic.LoadInt32(&w.jobVersion) {
-				pool.RLock()
-				w.Lock()
-				w.job = pool.job
-				atomic.StoreInt32(&w.jobVersion, atomic.LoadInt32(&pool.jobVersion))
-				w.Unlock()
-				pool.RUnlock()
-			}
-
 			w.dispatcherChan <- w.jobQueueChan
 			data := <-w.jobQueueChan
 			if nil == data && 1 == atomic.LoadInt32(&pool.isDisableWorker) {
-				pool.Done()
+				atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 				break Loop
+			} else {
+				w.launchTask(data)
 			}
-			w.do(data)
 		}
 	}()
 }
 
-func (w *worker) do(data interface{}) {
+func (w *worker) launchTask(data interface{}) {
 	defer func() {
 		_ = recover()
 	}()
@@ -128,25 +82,40 @@ func (w *worker) do(data interface{}) {
 }
 
 func (pool *Pool) stopWorker() {
-	atomic.AddInt32(&pool.isDisableWorker, 1)
+	atomic.SwapInt32(&pool.isDisableWorker, 1)
+	defer atomic.SwapInt32(&pool.isDisableWorker, 0)
 	pool.Do(nil)
-	atomic.AddInt32(&pool.isDisableWorker, -1)
-	atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 }
 
-func (pool *Pool) dispatcher() {
+func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
 	Loop:
 		for {
 			select {
-			case <-pool.closedChan:
-				pool.Done()
+			case <-pool.determinatePoolChan:
+				atomic.SwapInt32(&pool.numOfWorkers, 0)
+				for {
+					if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+						pool.stopWorker()
+					} else {
+						break
+					}
+				}
+				pool.closedPoolChan <- struct{}{}
+				break Loop
+			case <-ctx.Done():
+				atomic.SwapInt32(&pool.numOfWorkers, 0)
+				for {
+					if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+						pool.stopWorker()
+					} else {
+						break
+					}
+				}
 				break Loop
 			default:
 				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					if 0 == atomic.LoadInt32(&pool.isDisable) {
-						pool.worker()
-					}
+					pool.startWorker(ctx)
 				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
 					pool.stopWorker()
 				}
