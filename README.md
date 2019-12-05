@@ -1,3 +1,7 @@
+<p align="center">
+    <img width="757" src="https://github.com/noil/dachshund/dh.png">
+</p>
+
 ## Introduction
 
 Library `dachshund` implements a simple  workers pool. You could use it as buffered pool for recieving new tasks or as classic pool without buffering.
