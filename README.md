@@ -1,5 +1,5 @@
 <p align="center">
-    <img width="757" src="https://github.com/noil/dachshund/dh.png">
+    <img width="757" src="https://github.com/noil/dachshund/blob/master/dh.png?raw=true">
 </p>
 
 ## Introduction
