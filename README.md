@@ -20,11 +20,9 @@ $ go get github.com/noil/dachshund
 
 ## How to use
 
-Worker must implements `Pooler` interface
+Create function which corresponds to `Task` type from package `dachshund` 
 ```go
-type Pooler interface {
-	Do(data interface{})
-}
+type Task func(data interface{})
 ```
 
 ## Example
