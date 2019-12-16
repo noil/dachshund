@@ -10,8 +10,6 @@ Library `dachshund` implements a simple  workers pool. You could use it as buffe
 
 - Recycling the number of workers automatically
 - Changing (increase/descrease) the number of workers on the fly, without restarting or stopping the service
-- Changing (increase/descrease) queue buffer size on the fly, without restarting or stopping the service. If use buffered pool
-- Changing method which pool calls on the fly
 
 ### Installation
 

@@ -2,36 +2,40 @@ package dachshund
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 )
 
 type worker struct {
-	job            Pooler
+	task           Task
 	dispatcherChan chan chan interface{}
-	jobQueueChan   chan interface{}
+	taskQueueChan  chan interface{}
+	log            EventReciever
 }
 
 type Pool struct {
-	job                 Pooler
-	numOfWorkers        int32
-	actualNumOfWorkers  int32
-	dispatcherChan      chan chan interface{}
-	isDisableWorker     int32
-	determinatePoolChan chan struct{}
-	closedPoolChan      chan struct{}
+	task               Task
+	numOfWorkers       int32
+	actualNumOfWorkers int32
+	dispatcherChan     chan chan interface{}
+	isDisableWorker    int32
+	closingChan        chan struct{}
+	closedChan         chan struct{}
+	log                EventReciever
 }
 
-func NewPool(number int, job Pooler) *Pool {
-	return NewPoolWithContext(context.Background(), number, job)
+func NewPool(number int, task Task, log EventReciever) *Pool {
+	return NewPoolWithContext(context.Background(), number, task, log)
 }
 
-func NewPoolWithContext(ctx context.Context, number int, job Pooler) *Pool {
+func NewPoolWithContext(ctx context.Context, number int, task Task, log EventReciever) *Pool {
 	pool := &Pool{
-		job:                 job,
-		numOfWorkers:        int32(number),
-		dispatcherChan:      make(chan chan interface{}),
-		determinatePoolChan: make(chan struct{}),
-		closedPoolChan:      make(chan struct{}),
+		task:           task,
+		numOfWorkers:   int32(number),
+		dispatcherChan: make(chan chan interface{}),
+		closingChan:    make(chan struct{}),
+		closedChan:     make(chan struct{}),
+		log:            log,
 	}
 	pool.dispatcher(ctx)
 
@@ -39,34 +43,53 @@ func NewPoolWithContext(ctx context.Context, number int, job Pooler) *Pool {
 }
 
 func (pool *Pool) Do(data interface{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			var message string
+			switch x := r.(type) {
+			case string:
+				message = x
+			case error:
+				message = x.Error()
+			default:
+				message = fmt.Sprintf("%+v", r)
+			}
+			kvs := make(map[string]string)
+			kvs["problem"] = message
+			pool.log.EventErrKv("pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+		}
+	}()
 	(<-pool.dispatcherChan) <- data
 }
 
 func (pool *Pool) Release() {
-	pool.determinatePoolChan <- struct{}{}
-	<-pool.closedPoolChan
+	pool.closingChan <- struct{}{}
+	<-pool.closedChan
 }
 
 func (pool *Pool) Reload(number int) {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 }
 
-func (pool *Pool) startWorker(ctx context.Context) {
+func (pool *Pool) startWorker() {
 	w := &worker{
-		job:            pool.job,
+		task:           pool.task,
 		dispatcherChan: pool.dispatcherChan,
-		jobQueueChan:   make(chan interface{}),
+		taskQueueChan:  make(chan interface{}),
+		log:            pool.log,
 	}
 	atomic.AddInt32(&pool.actualNumOfWorkers, 1)
 
 	go func() {
-	Loop:
+		defer func() {
+			atomic.AddInt32(&pool.actualNumOfWorkers, -1)
+		}()
 		for {
-			w.dispatcherChan <- w.jobQueueChan
-			data := <-w.jobQueueChan
+			w.dispatcherChan <- w.taskQueueChan
+			data := <-w.taskQueueChan
+			// close worker
 			if nil == data && 1 == atomic.LoadInt32(&pool.isDisableWorker) {
-				atomic.AddInt32(&pool.actualNumOfWorkers, -1)
-				break Loop
+				break
 			} else {
 				w.launchTask(data)
 			}
@@ -76,9 +99,22 @@ func (pool *Pool) startWorker(ctx context.Context) {
 
 func (w *worker) launchTask(data interface{}) {
 	defer func() {
-		_ = recover()
+		if r := recover(); r != nil {
+			var message string
+			switch x := r.(type) {
+			case string:
+				message = x
+			case error:
+				message = x.Error()
+			default:
+				message = fmt.Sprintf("%+v", r)
+			}
+			kvs := make(map[string]string)
+			kvs["problem"] = message
+			w.log.EventErrKv("pool.do.task.error", ErrDoTaskPanic, kvs)
+		}
 	}()
-	w.job.Do(data)
+	w.task(data)
 }
 
 func (pool *Pool) stopWorker() {
@@ -92,7 +128,7 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 	Loop:
 		for {
 			select {
-			case <-pool.determinatePoolChan:
+			case <-pool.closingChan:
 				atomic.SwapInt32(&pool.numOfWorkers, 0)
 				for {
 					if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
@@ -101,7 +137,7 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 						break
 					}
 				}
-				pool.closedPoolChan <- struct{}{}
+				pool.closedChan <- struct{}{}
 				break Loop
 			case <-ctx.Done():
 				atomic.SwapInt32(&pool.numOfWorkers, 0)
@@ -115,7 +151,7 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 				break Loop
 			default:
 				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.startWorker(ctx)
+					pool.startWorker()
 				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
 					pool.stopWorker()
 				}

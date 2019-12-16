@@ -1,145 +1,154 @@
 package dachshund
 
 import (
-	"errors"
-	"sync"
+	"context"
+	"fmt"
 	"sync/atomic"
-	"time"
-)
-
-var (
-	ErrReleaseBufferedPool          = errors.New("can't release pool, try it latter.")
-	ErrReloadBufferedPoolInProgress = errors.New("can't reload pool, try it latter.")
 )
 
 type BufferedPool struct {
-	job                Pooler
+	task               Task
 	numOfWorkers       int32
 	actualNumOfWorkers int32
-	jobQueueBufferSize int32
-	isDisable          int32
-	isEmptyChan        int32
-	jobQueueChan       chan interface{}
+	queueBufferSize    int32
+	queueChan          chan interface{}
+	closingWorkerChan  chan struct{}
+	closedWorkerChan   chan struct{}
+	closingChan        chan struct{}
 	closedChan         chan struct{}
-	sync.WaitGroup
-	sync.RWMutex
+	log                EventReciever
 }
 
-func NewBufferedPool(number, jobBufferSize int, job Pooler) *BufferedPool {
-	pool := &BufferedPool{
-		job:                job,
-		numOfWorkers:       int32(number),
-		jobQueueBufferSize: int32(jobBufferSize),
-		jobQueueChan:       make(chan interface{}, jobBufferSize),
-		closedChan:         make(chan struct{}),
-	}
-	pool.dispatcher()
+// New buffered pool instantiates a BufferedPool
+func NewBufferedPool(number, bufferSize int, task Task, log EventReciever) *BufferedPool {
+	return NewBufferedPoolWithContext(context.Background(), number, bufferSize, task, log)
+}
 
+// New buffered pool instantiates a BufferedPool with context
+func NewBufferedPoolWithContext(ctx context.Context, number, bufferSize int, task Task, log EventReciever) *BufferedPool {
+	if log == nil {
+		log = nullReceiver
+	}
+	pool := &BufferedPool{
+		task:              task,
+		numOfWorkers:      int32(number),
+		queueBufferSize:   int32(bufferSize),
+		queueChan:         make(chan interface{}, bufferSize),
+		closingWorkerChan: make(chan struct{}),
+		closedWorkerChan:  make(chan struct{}),
+		closingChan:       make(chan struct{}),
+		closedChan:        make(chan struct{}),
+		log:               log,
+	}
+	pool.dispatcher(ctx)
 	return pool
 }
 
+// Launch tasks
 func (pool *BufferedPool) Do(data interface{}) {
-	if data != nil {
-		for 0 < atomic.LoadInt32(&pool.isDisable) {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	if 0 == atomic.LoadInt32(&pool.isEmptyChan) {
-		pool.jobQueueChan <- data
-	}
-}
-
-func (pool *BufferedPool) Release() error {
-	isDisable := atomic.LoadInt32(&pool.isDisable)
-	if 1 == isDisable {
-		return ErrReleaseBufferedPool
-	}
-	atomic.AddInt32(&pool.isDisable, 1)
-	numOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-	atomic.SwapInt32(&pool.numOfWorkers, 0)
-	pool.Add(int(numOfWorkers))
-	for i := int32(0); i < numOfWorkers; i++ {
-		pool.Do(nil)
-	}
-	pool.Wait()
-	atomic.AddInt32(&pool.isEmptyChan, 1)
-	close(pool.jobQueueChan)
-	pool.Add(1)
-	pool.closedChan <- struct{}{}
-	pool.Wait()
-
-	return nil
-}
-
-func (pool *BufferedPool) Reload(number, jobBufferSize int, job Pooler) error {
-	pool.Lock()
-	isDisable := atomic.LoadInt32(&pool.isDisable)
-	if 1 == isDisable {
-		return ErrReloadBufferedPoolInProgress
-	}
 	defer func() {
-		pool.Unlock()
+		if r := recover(); r != nil {
+			var message string
+			switch x := r.(type) {
+			case string:
+				message = x
+			case error:
+				message = x.Error()
+			default:
+				message = fmt.Sprintf("%+v", r)
+			}
+			kvs := make(map[string]string)
+			kvs["problem"] = message
+			pool.log.EventErrKv("buffered.pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+		}
 	}()
-	atomic.AddInt32(&pool.isDisable, 1)
-	pool.Add(1)
-	pool.closedChan <- struct{}{}
-	pool.Wait()
-	actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-	atomic.SwapInt32(&pool.numOfWorkers, 0)
-	pool.Add(int(actualNumOfWorkers))
-	for i := int32(0); i < actualNumOfWorkers; i++ {
-		pool.Do(nil)
-	}
-	pool.Wait()
-	atomic.AddInt32(&pool.isEmptyChan, 1)
+	pool.queueChan <- data
+}
+
+func (pool *BufferedPool) Release() {
+	pool.closingChan <- struct{}{}
+	<-pool.closedChan
+}
+
+func (pool *BufferedPool) Reload(number int) {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
-	if pool.job != job {
-		pool.job = job
-	}
-	close(pool.jobQueueChan)
-	pool.jobQueueChan = make(chan interface{}, jobBufferSize)
-	atomic.AddInt32(&pool.isEmptyChan, -1)
-	atomic.AddInt32(&pool.isDisable, -1)
-	pool.dispatcher()
-
-	return nil
 }
 
-func (pool *BufferedPool) worker() {
-	defer func() {
-		atomic.AddInt32(&pool.actualNumOfWorkers, -1)
-	}()
-	for data := range pool.jobQueueChan {
-		/**
-		* close worker
-		 */
-		if nil == data && 1 == atomic.LoadInt32(&pool.isDisable) {
-			pool.Done()
-			return
+func (pool *BufferedPool) startWorker() {
+	go func() {
+		atomic.AddInt32(&pool.actualNumOfWorkers, 1)
+	Loop:
+		for {
+			select {
+			case data, ok := <-pool.queueChan:
+				if ok {
+					pool.launchTask(data)
+				} else {
+					//TODO: return event to EventReciecer
+				}
+			case <-pool.closingWorkerChan:
+				atomic.AddInt32(&pool.actualNumOfWorkers, -1)
+				pool.closedWorkerChan <- struct{}{}
+				break Loop
+			}
 		}
-		pool.doTask(data)
+	}()
+}
+
+func (pool *BufferedPool) stopWorker() bool {
+	if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+		pool.closingWorkerChan <- struct{}{}
+		<-pool.closedWorkerChan
+
+		return true
+	}
+
+	return false
+}
+
+func (pool *BufferedPool) stopWorkers() {
+	atomic.SwapInt32(&pool.numOfWorkers, 0)
+	for pool.stopWorker() {
 	}
 }
 
-func (pool *BufferedPool) doTask(data interface{}) {
+func (pool *BufferedPool) launchTask(data interface{}) {
 	defer func() {
-		_ = recover()
+		if r := recover(); r != nil {
+			var message string
+			switch x := r.(type) {
+			case string:
+				message = x
+			case error:
+				message = x.Error()
+			default:
+				message = fmt.Sprintf("%+v", r)
+			}
+			kvs := make(map[string]string)
+			kvs["problem"] = message
+			pool.log.EventErrKv("buffered.pool.do.task.error", ErrDoTaskPanic, kvs)
+		}
 	}()
-	pool.job.Do(data)
+	pool.task(data)
 }
 
-func (pool *BufferedPool) dispatcher() {
+func (pool *BufferedPool) dispatcher(ctx context.Context) {
 	go func() {
 	Loop:
 		for {
 			select {
-			case <-pool.closedChan:
-				pool.Done()
+			case <-pool.closingChan:
+				pool.stopWorkers()
+				pool.closedChan <- struct{}{}
+				break Loop
+			case <-ctx.Done():
+				pool.stopWorkers()
 				break Loop
 			default:
 				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					go pool.worker()
-					atomic.AddInt32(&pool.actualNumOfWorkers, 1)
+					pool.startWorker()
+				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+					pool.stopWorker()
 				}
 			}
 		}

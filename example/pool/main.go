@@ -25,7 +25,7 @@ func (d *Demo) Do(data interface{}) {
 
 func main() {
 	demo := &Demo{}
-	pool := dachshund.NewPool(10, demo)
+	pool := dachshund.NewPool(10, demo.Do, nil)
 	// ctx, cancel := context.WithCancel(context.Background())
 	// pool := dachshund.NewPoolWithContext(ctx, 10, demo)
 

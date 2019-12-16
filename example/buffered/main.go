@@ -28,22 +28,18 @@ func main() {
 	viper.SetConfigType("yaml")
 	var yamlExample = []byte(`
 numOfWorkers: 10
-queueBuffSize: 20
 `)
 	viper.ReadConfig(bytes.NewBuffer(yamlExample))
 
 	demo := &Demo{}
-	pool := dachshund.NewBufferedPool(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo)
+	pool := dachshund.NewBufferedPool(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo.Do, nil)
 	defer func() {
-		err := pool.Release()
-		if err != nil {
-			fmt.Println(err)
-		}
+		pool.Release()
 	}()
 
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		pool.Reload(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo)
+		pool.Reload(viper.GetInt("numOfWorkers"))
 	})
 
 	for i := 0; i < 1000000; i++ {

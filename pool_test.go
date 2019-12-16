@@ -64,7 +64,7 @@ func (s *Task3) Do(data interface{}) {
 func TestNewPool(t *testing.T) {
 	fmt.Println("test new pool has launched")
 	task := &Task1{result: make(chan interface{}, 20)}
-	p := NewPool(10, task)
+	p := NewPool(10, task.Do)
 	defer p.Release()
 	i := 2
 	p.Do(i)
@@ -92,7 +92,7 @@ func TestNewPool(t *testing.T) {
 func TestReload(t *testing.T) {
 	fmt.Println("test reload has launched")
 	task3 := &Task3{}
-	p := NewPool(1, task3)
+	p := NewPool(1, task3.Do)
 	defer p.Release()
 
 	go func() {
@@ -119,7 +119,8 @@ func (s *PanicTask) Do(data interface{}) {
 }
 
 func TestPanic(t *testing.T) {
-	p := NewPool(10, &PanicTask{})
+	pt := &PanicTask{}
+	p := NewPool(10, pt.Do)
 	defer p.Release()
 
 	for i := 0; i < 20; i++ {
