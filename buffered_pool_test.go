@@ -62,7 +62,7 @@ func (s *BTask3) Do(data interface{}) {
 
 func TestNewBufferedPool(t *testing.T) {
 	task := &BTask1{result: make(chan interface{}, 20)}
-	p := NewBufferedPool(10, 20, task.Do, nil)
+	p := NewBufferedPool("test2", 10, 20, task.Do, nil)
 	defer func() {
 		p.Release()
 		fmt.Println("test new buffered pool has finished")
@@ -101,7 +101,7 @@ func (s *PanicTaskBuffered) Do(data interface{}) {
 
 func TestPanicBuffered(t *testing.T) {
 	pt := &PanicTaskBuffered{}
-	p := NewBufferedPool(10, 20, pt.Do, nil)
+	p := NewBufferedPool("test3", 10, 20, pt.Do, nil)
 	defer func() {
 		p.Release()
 		fmt.Println("test panic buffered has finished")

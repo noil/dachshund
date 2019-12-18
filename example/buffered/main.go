@@ -32,7 +32,7 @@ numOfWorkers: 10
 	viper.ReadConfig(bytes.NewBuffer(yamlExample))
 
 	demo := &Demo{}
-	pool := dachshund.NewBufferedPool(viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo.Do, nil)
+	pool := dachshund.NewBufferedPool("demo", viper.GetInt("numOfWorkers"), viper.GetInt("queueBuffSize"), demo.Do, nil)
 	defer func() {
 		pool.Release()
 	}()

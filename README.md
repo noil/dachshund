@@ -46,7 +46,7 @@ func (f *Foo) Do(data interface{}) {
 
 func main() {
 	f := &Foo{}
-	bp := dachshund.NewBufferedPool(5, 10, f)
+	bp := dachshund.NewBufferedPool("demo", 5, 10, f, nil)
 	defer bp.Release()
 	for i := 0; i < 1000000; i++ {
 		wg.Add(1)
@@ -54,7 +54,7 @@ func main() {
 		wg.Wait()
 	}
 
-	p := dachshund.NewPool(5, f)
+	p := dachshund.NewPool("demo", 5, f, nil)
 	defer p.Release()
 	for i := 0; i < 1000000; i++ {
 		wg.Add(1)

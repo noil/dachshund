@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+
+	"github.com/pkg/errors"
 )
 
 type worker struct {
+	label          string
 	task           Task
 	dispatcherChan chan chan interface{}
 	taskQueueChan  chan interface{}
@@ -14,6 +17,7 @@ type worker struct {
 }
 
 type Pool struct {
+	label              string
 	task               Task
 	numOfWorkers       int32
 	actualNumOfWorkers int32
@@ -24,12 +28,13 @@ type Pool struct {
 	log                EventReciever
 }
 
-func NewPool(number int, task Task, log EventReciever) *Pool {
-	return NewPoolWithContext(context.Background(), number, task, log)
+func NewPool(label string, number int, task Task, log EventReciever) *Pool {
+	return NewPoolWithContext(context.Background(), label, number, task, log)
 }
 
-func NewPoolWithContext(ctx context.Context, number int, task Task, log EventReciever) *Pool {
+func NewPoolWithContext(ctx context.Context, label string, number int, task Task, log EventReciever) *Pool {
 	pool := &Pool{
+		label:          label,
 		task:           task,
 		numOfWorkers:   int32(number),
 		dispatcherChan: make(chan chan interface{}),
@@ -50,13 +55,13 @@ func (pool *Pool) Do(data interface{}) {
 			case string:
 				message = x
 			case error:
-				message = x.Error()
+				message = fmt.Sprintf("%+v", errors.WithStack(x))
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
 			kvs := make(map[string]string)
 			kvs["problem"] = message
-			pool.log.EventErrKv("pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+			pool.log.EventErrKv(pool.label+"pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
 		}
 	}()
 	(<-pool.dispatcherChan) <- data
@@ -73,6 +78,7 @@ func (pool *Pool) Reload(number int) {
 
 func (pool *Pool) startWorker() {
 	w := &worker{
+		label:          pool.label,
 		task:           pool.task,
 		dispatcherChan: pool.dispatcherChan,
 		taskQueueChan:  make(chan interface{}),
@@ -105,13 +111,11 @@ func (w *worker) launchTask(data interface{}) {
 			case string:
 				message = x
 			case error:
-				message = x.Error()
+				message = fmt.Sprintf("%+v", errors.WithStack(x))
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
-			kvs := make(map[string]string)
-			kvs["problem"] = message
-			w.log.EventErrKv("pool.do.task.error", ErrDoTaskPanic, kvs)
+			w.log.EventErrKv(w.label+"pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
 		}
 	}()
 	w.task(data)

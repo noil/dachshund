@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+
+	"github.com/pkg/errors"
 )
 
 type BufferedPool struct {
+	label              string
 	task               Task
 	numOfWorkers       int32
 	actualNumOfWorkers int32
@@ -20,16 +23,17 @@ type BufferedPool struct {
 }
 
 // New buffered pool instantiates a BufferedPool
-func NewBufferedPool(number, bufferSize int, task Task, log EventReciever) *BufferedPool {
-	return NewBufferedPoolWithContext(context.Background(), number, bufferSize, task, log)
+func NewBufferedPool(label string, number, bufferSize int, task Task, log EventReciever) *BufferedPool {
+	return NewBufferedPoolWithContext(context.Background(), label, number, bufferSize, task, log)
 }
 
 // New buffered pool instantiates a BufferedPool with context
-func NewBufferedPoolWithContext(ctx context.Context, number, bufferSize int, task Task, log EventReciever) *BufferedPool {
+func NewBufferedPoolWithContext(ctx context.Context, label string, number, bufferSize int, task Task, log EventReciever) *BufferedPool {
 	if log == nil {
 		log = nullReceiver
 	}
 	pool := &BufferedPool{
+		label:             label,
 		task:              task,
 		numOfWorkers:      int32(number),
 		queueBufferSize:   int32(bufferSize),
@@ -53,13 +57,13 @@ func (pool *BufferedPool) Do(data interface{}) {
 			case string:
 				message = x
 			case error:
-				message = x.Error()
+				message = fmt.Sprintf("%+v", errors.WithStack(x))
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
 			kvs := make(map[string]string)
 			kvs["problem"] = message
-			pool.log.EventErrKv("buffered.pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+			pool.log.EventErrKv(pool.label+".pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
 		}
 	}()
 	pool.queueChan <- data
@@ -120,13 +124,11 @@ func (pool *BufferedPool) launchTask(data interface{}) {
 			case string:
 				message = x
 			case error:
-				message = x.Error()
+				message = fmt.Sprintf("%+v", errors.WithStack(x))
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
-			kvs := make(map[string]string)
-			kvs["problem"] = message
-			pool.log.EventErrKv("buffered.pool.do.task.error", ErrDoTaskPanic, kvs)
+			pool.log.EventErrKv(pool.label+".pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
 		}
 	}()
 	pool.task(data)
