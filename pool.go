@@ -33,6 +33,9 @@ func NewPool(label string, number int, task Task, log EventReciever) *Pool {
 }
 
 func NewPoolWithContext(ctx context.Context, label string, number int, task Task, log EventReciever) *Pool {
+	if log == nil {
+		log = nullReceiver
+	}
 	pool := &Pool{
 		label:          label,
 		task:           task,
@@ -115,7 +118,7 @@ func (w *worker) launchTask(data interface{}) {
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
-			w.log.EventErrKv(w.label+"pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
+			w.log.EventErrKv(w.label+".pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
 		}
 	}()
 	w.task(data)

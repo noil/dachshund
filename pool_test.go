@@ -111,6 +111,11 @@ func TestReload(t *testing.T) {
 type PanicTask struct{}
 
 func (s *PanicTask) Do(data interface{}) {
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		fmt.Println(r)
+	// 	}
+	// }()
 	if value, ok := data.(string); ok {
 		fmt.Println(value)
 	} else {
