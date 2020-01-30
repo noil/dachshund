@@ -81,7 +81,6 @@ func (pool *BufferedPool) Reload(number int) {
 	pool.mu.Lock()
 	pool.numOfWorkers = int32(number)
 	pool.mu.Unlock()
-	// atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 	pool.resizingChan <- struct{}{}
 }
 
@@ -90,7 +89,6 @@ func (pool *BufferedPool) startWorker() {
 		pool.mu.Lock()
 		pool.actualNumOfWorkers += 1
 		pool.mu.Unlock()
-		// atomic.AddInt32(&pool.actualNumOfWorkers, 1)
 	Loop:
 		for {
 			select {
@@ -101,7 +99,6 @@ func (pool *BufferedPool) startWorker() {
 					//TODO: return event to EventReciecer
 				}
 			case <-pool.closingWorkerChan:
-				// atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 				pool.closedWorkerChan <- struct{}{}
 				break Loop
 			}
@@ -112,7 +109,6 @@ func (pool *BufferedPool) startWorker() {
 func (pool *BufferedPool) stopWorker() bool {
 	var result bool
 	pool.mu.Lock()
-	// if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
 	if 0 != pool.actualNumOfWorkers {
 		pool.closingWorkerChan <- struct{}{}
 		<-pool.closedWorkerChan
@@ -127,7 +123,6 @@ func (pool *BufferedPool) stopWorkers() {
 	pool.mu.Lock()
 	pool.numOfWorkers = 0
 	pool.mu.Unlock()
-	// atomic.SwapInt32(&pool.numOfWorkers, 0)
 	for pool.stopWorker() {
 	}
 }
@@ -153,8 +148,6 @@ func (pool *BufferedPool) launchTask(data interface{}) {
 func (pool *BufferedPool) dispatcher(ctx context.Context) {
 	go func() {
 		pool.mu.Lock()
-		// actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-		// numOfWorkers := atomic.LoadInt32(&pool.numOfWorkers)
 		actualNumOfWorkers := pool.actualNumOfWorkers
 		numOfWorkers := pool.numOfWorkers
 		pool.mu.Unlock()

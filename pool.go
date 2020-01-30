@@ -86,7 +86,6 @@ func (pool *Pool) Reload(number int) {
 	pool.mu.Lock()
 	pool.numOfWorkers = int32(number)
 	pool.mu.Unlock()
-	// atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 	pool.resizingChan <- struct{}{}
 }
 
@@ -103,7 +102,6 @@ func (pool *Pool) startWorker() {
 	pool.mu.Lock()
 	pool.actualNumOfWorkers += 1
 	pool.mu.Unlock()
-	// atomic.AddInt32(&pool.actualNumOfWorkers, 1)
 
 	go func() {
 	Loop:
@@ -117,7 +115,6 @@ func (pool *Pool) startWorker() {
 				break Loop
 			}
 		}
-		// atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 	}()
 }
 
@@ -142,7 +139,6 @@ func (w *worker) launchTask(data interface{}) {
 func (pool *Pool) stopWorker() bool {
 	var result bool
 	pool.mu.Lock()
-	// if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
 	if 0 != pool.actualNumOfWorkers {
 		<-pool.dispatcherChan
 		pool.workerClosingChan <- struct{}{}
@@ -158,7 +154,6 @@ func (pool *Pool) stopWorkers() {
 	pool.mu.Lock()
 	pool.numOfWorkers = 0
 	pool.mu.Unlock()
-	// atomic.SwapInt32(&pool.numOfWorkers, 0)
 	for pool.stopWorker() {
 	}
 }
@@ -166,8 +161,6 @@ func (pool *Pool) stopWorkers() {
 func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
 		pool.mu.Lock()
-		// actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-		// numOfWorkers := atomic.LoadInt32(&pool.numOfWorkers)
 		actualNumOfWorkers := pool.actualNumOfWorkers
 		numOfWorkers := pool.numOfWorkers
 		pool.mu.Unlock()
@@ -201,15 +194,6 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 						break
 					}
 				}
-				// for {
-				// 	if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-				// 		pool.startWorker()
-				// 	} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
-				// 		pool.stopWorker()
-				// 	} else {
-				// 		break
-				// 	}
-				// }
 			}
 		}
 	}()
