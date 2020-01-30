@@ -3,7 +3,7 @@ package dachshund
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
+	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -21,6 +21,7 @@ type BufferedPool struct {
 	closedChan         chan struct{}
 	resizingChan       chan struct{}
 	log                EventReciever
+	mu                 sync.RWMutex
 }
 
 // New buffered pool instantiates a BufferedPool
@@ -77,13 +78,19 @@ func (pool *BufferedPool) Release() {
 }
 
 func (pool *BufferedPool) Reload(number int) {
-	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
+	pool.mu.Lock()
+	pool.numOfWorkers = int32(number)
+	pool.mu.Unlock()
+	// atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 	pool.resizingChan <- struct{}{}
 }
 
 func (pool *BufferedPool) startWorker() {
 	go func() {
-		atomic.AddInt32(&pool.actualNumOfWorkers, 1)
+		pool.mu.Lock()
+		pool.actualNumOfWorkers += 1
+		pool.mu.Unlock()
+		// atomic.AddInt32(&pool.actualNumOfWorkers, 1)
 	Loop:
 		for {
 			select {
@@ -94,7 +101,7 @@ func (pool *BufferedPool) startWorker() {
 					//TODO: return event to EventReciecer
 				}
 			case <-pool.closingWorkerChan:
-				atomic.AddInt32(&pool.actualNumOfWorkers, -1)
+				// atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 				pool.closedWorkerChan <- struct{}{}
 				break Loop
 			}
@@ -103,18 +110,24 @@ func (pool *BufferedPool) startWorker() {
 }
 
 func (pool *BufferedPool) stopWorker() bool {
-	if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+	var result bool
+	pool.mu.Lock()
+	// if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+	if 0 != pool.actualNumOfWorkers {
 		pool.closingWorkerChan <- struct{}{}
 		<-pool.closedWorkerChan
-
-		return true
+		pool.actualNumOfWorkers -= 1
+		result = true
 	}
-
-	return false
+	pool.mu.Unlock()
+	return result
 }
 
 func (pool *BufferedPool) stopWorkers() {
-	atomic.SwapInt32(&pool.numOfWorkers, 0)
+	pool.mu.Lock()
+	pool.numOfWorkers = 0
+	pool.mu.Unlock()
+	// atomic.SwapInt32(&pool.numOfWorkers, 0)
 	for pool.stopWorker() {
 	}
 }
@@ -139,14 +152,15 @@ func (pool *BufferedPool) launchTask(data interface{}) {
 
 func (pool *BufferedPool) dispatcher(ctx context.Context) {
 	go func() {
-		for {
-			if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-				pool.startWorker()
-			} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
-				pool.stopWorker()
-			} else {
-				break
-			}
+		pool.mu.Lock()
+		// actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
+		// numOfWorkers := atomic.LoadInt32(&pool.numOfWorkers)
+		actualNumOfWorkers := pool.actualNumOfWorkers
+		numOfWorkers := pool.numOfWorkers
+		pool.mu.Unlock()
+		for actualNumOfWorkers < numOfWorkers {
+			actualNumOfWorkers++
+			pool.startWorker()
 		}
 	Loop:
 		for {
@@ -159,10 +173,16 @@ func (pool *BufferedPool) dispatcher(ctx context.Context) {
 				pool.stopWorkers()
 				break Loop
 			case <-pool.resizingChan:
+				pool.mu.Lock()
+				actualNumOfWorkers := pool.actualNumOfWorkers
+				numOfWorkers := pool.numOfWorkers
+				pool.mu.Unlock()
 				for {
-					if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+					if actualNumOfWorkers < numOfWorkers {
+						actualNumOfWorkers++
 						pool.startWorker()
-					} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+					} else if actualNumOfWorkers > numOfWorkers {
+						actualNumOfWorkers--
 						pool.stopWorker()
 					} else {
 						break

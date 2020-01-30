@@ -3,7 +3,7 @@ package dachshund
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
+	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -24,13 +24,13 @@ type Pool struct {
 	numOfWorkers       int32
 	actualNumOfWorkers int32
 	dispatcherChan     chan chan interface{}
-	isDisableWorker    int32
 	resizingChan       chan struct{}
 	closingChan        chan struct{}
 	closedChan         chan struct{}
 	workerClosingChan  chan struct{}
 	workerClosedChan   chan struct{}
 	log                EventReciever
+	mu                 sync.RWMutex
 }
 
 func NewPool(label string, number int, task Task, log EventReciever) *Pool {
@@ -83,7 +83,10 @@ func (pool *Pool) Release() {
 }
 
 func (pool *Pool) Reload(number int) {
-	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
+	pool.mu.Lock()
+	pool.numOfWorkers = int32(number)
+	pool.mu.Unlock()
+	// atomic.SwapInt32(&pool.numOfWorkers, int32(number))
 	pool.resizingChan <- struct{}{}
 }
 
@@ -97,7 +100,10 @@ func (pool *Pool) startWorker() {
 		closingChan:    pool.workerClosingChan,
 		closedChan:     pool.workerClosedChan,
 	}
-	atomic.AddInt32(&pool.actualNumOfWorkers, 1)
+	pool.mu.Lock()
+	pool.actualNumOfWorkers += 1
+	pool.mu.Unlock()
+	// atomic.AddInt32(&pool.actualNumOfWorkers, 1)
 
 	go func() {
 	Loop:
@@ -111,7 +117,7 @@ func (pool *Pool) startWorker() {
 				break Loop
 			}
 		}
-		atomic.AddInt32(&pool.actualNumOfWorkers, -1)
+		// atomic.AddInt32(&pool.actualNumOfWorkers, -1)
 	}()
 }
 
@@ -133,53 +139,77 @@ func (w *worker) launchTask(data interface{}) {
 	w.task(data)
 }
 
-func (pool *Pool) stopWorker() {
-	atomic.SwapInt32(&pool.isDisableWorker, 1)
-	defer atomic.SwapInt32(&pool.isDisableWorker, 0)
-	<-pool.dispatcherChan
-	pool.workerClosingChan <- struct{}{}
-	<-pool.workerClosedChan
+func (pool *Pool) stopWorker() bool {
+	var result bool
+	pool.mu.Lock()
+	// if 0 != atomic.LoadInt32(&pool.actualNumOfWorkers) {
+	if 0 != pool.actualNumOfWorkers {
+		<-pool.dispatcherChan
+		pool.workerClosingChan <- struct{}{}
+		<-pool.workerClosedChan
+		pool.actualNumOfWorkers -= 1
+		result = true
+	}
+	pool.mu.Unlock()
+	return result
+}
+
+func (pool *Pool) stopWorkers() {
+	pool.mu.Lock()
+	pool.numOfWorkers = 0
+	pool.mu.Unlock()
+	// atomic.SwapInt32(&pool.numOfWorkers, 0)
+	for pool.stopWorker() {
+	}
 }
 
 func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
-		for {
-			if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-				pool.startWorker()
-			} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
-				pool.stopWorker()
-			} else {
-				break
-			}
+		pool.mu.Lock()
+		// actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
+		// numOfWorkers := atomic.LoadInt32(&pool.numOfWorkers)
+		actualNumOfWorkers := pool.actualNumOfWorkers
+		numOfWorkers := pool.numOfWorkers
+		pool.mu.Unlock()
+		for actualNumOfWorkers < numOfWorkers {
+			actualNumOfWorkers++
+			pool.startWorker()
 		}
 	Loop:
 		for {
 			select {
 			case <-pool.closingChan:
-				atomic.SwapInt32(&pool.numOfWorkers, 0)
-				actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-				for i := int32(0); i < actualNumOfWorkers; i++ {
-					pool.stopWorker()
-				}
+				pool.stopWorkers()
 				pool.closedChan <- struct{}{}
 				break Loop
 			case <-ctx.Done():
-				atomic.SwapInt32(&pool.numOfWorkers, 0)
-				actualNumOfWorkers := atomic.LoadInt32(&pool.actualNumOfWorkers)
-				for i := int32(0); i < actualNumOfWorkers; i++ {
-					pool.stopWorker()
-				}
+				pool.stopWorkers()
 				break Loop
 			case <-pool.resizingChan:
+				pool.mu.Lock()
+				actualNumOfWorkers := pool.actualNumOfWorkers
+				numOfWorkers := pool.numOfWorkers
+				pool.mu.Unlock()
 				for {
-					if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+					if actualNumOfWorkers < numOfWorkers {
+						actualNumOfWorkers++
 						pool.startWorker()
-					} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+					} else if actualNumOfWorkers > numOfWorkers {
+						actualNumOfWorkers--
 						pool.stopWorker()
 					} else {
 						break
 					}
 				}
+				// for {
+				// 	if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+				// 		pool.startWorker()
+				// 	} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+				// 		pool.stopWorker()
+				// 	} else {
+				// 		break
+				// 	}
+				// }
 			}
 		}
 	}()

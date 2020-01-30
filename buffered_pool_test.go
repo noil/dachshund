@@ -77,6 +77,7 @@ func TestNewBufferedPool(t *testing.T) {
 			"got", value,
 		)
 	}
+	// time.Sleep(1 * time.Second)
 	s := "Hello World!"
 	p.Do(s)
 	result = <-task.result
@@ -87,6 +88,7 @@ func TestNewBufferedPool(t *testing.T) {
 			"got", value,
 		)
 	}
+	// time.Sleep(1 * time.Second)
 }
 
 type PanicTaskBuffered struct{}

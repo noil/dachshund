@@ -65,7 +65,9 @@ func TestNewPool(t *testing.T) {
 	fmt.Println("test new pool has launched")
 	task := &Task1{result: make(chan interface{}, 20)}
 	p := NewPool("test1", 10, task.Do, nil)
-	defer p.Release()
+	defer func() {
+		p.Release()
+	}()
 	i := 2
 	p.Do(i)
 	result := <-task.result
@@ -76,6 +78,7 @@ func TestNewPool(t *testing.T) {
 			"got", value,
 		)
 	}
+	// time.Sleep(1 * time.Second)
 
 	s := "Hello World!"
 	p.Do(s)
@@ -87,6 +90,7 @@ func TestNewPool(t *testing.T) {
 			"got", value,
 		)
 	}
+	// time.Sleep(1 * time.Second)
 }
 
 func TestReload(t *testing.T) {
