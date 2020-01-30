@@ -25,6 +25,7 @@ type Pool struct {
 	actualNumOfWorkers int32
 	dispatcherChan     chan chan interface{}
 	isDisableWorker    int32
+	resizingChan       chan struct{}
 	closingChan        chan struct{}
 	closedChan         chan struct{}
 	workerClosingChan  chan struct{}
@@ -45,6 +46,7 @@ func NewPoolWithContext(ctx context.Context, label string, number int, task Task
 		task:              task,
 		numOfWorkers:      int32(number),
 		dispatcherChan:    make(chan chan interface{}),
+		resizingChan:      make(chan struct{}),
 		closingChan:       make(chan struct{}),
 		closedChan:        make(chan struct{}),
 		workerClosingChan: make(chan struct{}),
@@ -52,7 +54,6 @@ func NewPoolWithContext(ctx context.Context, label string, number int, task Task
 		log:               log,
 	}
 	pool.dispatcher(ctx)
-
 	return pool
 }
 
@@ -83,6 +84,7 @@ func (pool *Pool) Release() {
 
 func (pool *Pool) Reload(number int) {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
+	pool.resizingChan <- struct{}{}
 }
 
 func (pool *Pool) startWorker() {
@@ -141,6 +143,15 @@ func (pool *Pool) stopWorker() {
 
 func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
+		for {
+			if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+				pool.startWorker()
+			} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+				pool.stopWorker()
+			} else {
+				break
+			}
+		}
 	Loop:
 		for {
 			select {
@@ -159,11 +170,15 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 					pool.stopWorker()
 				}
 				break Loop
-			default:
-				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.startWorker()
-				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.stopWorker()
+			case <-pool.resizingChan:
+				for {
+					if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+						pool.startWorker()
+					} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+						pool.stopWorker()
+					} else {
+						break
+					}
 				}
 			}
 		}

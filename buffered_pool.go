@@ -19,6 +19,7 @@ type BufferedPool struct {
 	closedWorkerChan   chan struct{}
 	closingChan        chan struct{}
 	closedChan         chan struct{}
+	resizingChan       chan struct{}
 	log                EventReciever
 }
 
@@ -42,6 +43,7 @@ func NewBufferedPoolWithContext(ctx context.Context, label string, number, buffe
 		closedWorkerChan:  make(chan struct{}),
 		closingChan:       make(chan struct{}),
 		closedChan:        make(chan struct{}),
+		resizingChan:      make(chan struct{}),
 		log:               log,
 	}
 	pool.dispatcher(ctx)
@@ -76,6 +78,7 @@ func (pool *BufferedPool) Release() {
 
 func (pool *BufferedPool) Reload(number int) {
 	atomic.SwapInt32(&pool.numOfWorkers, int32(number))
+	pool.resizingChan <- struct{}{}
 }
 
 func (pool *BufferedPool) startWorker() {
@@ -136,6 +139,15 @@ func (pool *BufferedPool) launchTask(data interface{}) {
 
 func (pool *BufferedPool) dispatcher(ctx context.Context) {
 	go func() {
+		for {
+			if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+				pool.startWorker()
+			} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+				pool.stopWorker()
+			} else {
+				break
+			}
+		}
 	Loop:
 		for {
 			select {
@@ -146,11 +158,15 @@ func (pool *BufferedPool) dispatcher(ctx context.Context) {
 			case <-ctx.Done():
 				pool.stopWorkers()
 				break Loop
-			default:
-				if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.startWorker()
-				} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
-					pool.stopWorker()
+			case <-pool.resizingChan:
+				for {
+					if atomic.LoadInt32(&pool.actualNumOfWorkers) < atomic.LoadInt32(&pool.numOfWorkers) {
+						pool.startWorker()
+					} else if atomic.LoadInt32(&pool.actualNumOfWorkers) > atomic.LoadInt32(&pool.numOfWorkers) {
+						pool.stopWorker()
+					} else {
+						break
+					}
 				}
 			}
 		}
