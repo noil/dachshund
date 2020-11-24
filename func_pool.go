@@ -8,25 +8,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-type worker struct {
-	label         string
-	task          Task
-	taskChan      chan chan interface{}
-	taskQueueChan chan interface{}
-	f             func(func())
-	fChan         chan chan func()
-	fQueueChan    chan func()
-	log           EventReciever
-	closingChan   chan struct{}
-	closedChan    chan struct{}
-}
-
-type Pool struct {
+type FuncPool struct {
 	label              string
-	task               Task
 	numOfWorkers       int32
 	actualNumOfWorkers int32
-	taskChan           chan chan interface{}
+	fChan              chan chan func()
 	resizingChan       chan struct{}
 	closingChan        chan struct{}
 	closedChan         chan struct{}
@@ -36,19 +22,18 @@ type Pool struct {
 	mu                 sync.RWMutex
 }
 
-func NewPool(label string, number int, task Task, log EventReciever) *Pool {
-	return NewPoolWithContext(context.Background(), label, number, task, log)
+func NewFuncPool(label string, number int, log EventReciever) *FuncPool {
+	return NewFuncPoolWithContext(context.Background(), label, number, log)
 }
 
-func NewPoolWithContext(ctx context.Context, label string, number int, task Task, log EventReciever) *Pool {
+func NewFuncPoolWithContext(ctx context.Context, label string, number int, log EventReciever) *FuncPool {
 	if log == nil {
 		log = nullReceiver
 	}
-	pool := &Pool{
+	pool := &FuncPool{
 		label:             label,
-		task:              task,
 		numOfWorkers:      int32(number),
-		taskChan:          make(chan chan interface{}),
+		fChan:             make(chan chan func()),
 		resizingChan:      make(chan struct{}),
 		closingChan:       make(chan struct{}),
 		closedChan:        make(chan struct{}),
@@ -60,7 +45,7 @@ func NewPoolWithContext(ctx context.Context, label string, number int, task Task
 	return pool
 }
 
-func (pool *Pool) Do(data interface{}) {
+func (pool *FuncPool) Do(f func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			var message string
@@ -74,45 +59,44 @@ func (pool *Pool) Do(data interface{}) {
 			}
 			kvs := make(map[string]string)
 			kvs["problem"] = message
-			pool.log.EventErrKv(pool.label+"pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+			pool.log.EventErrKv(pool.label+"func.pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
 		}
 	}()
-	(<-pool.taskChan) <- data
+	(<-pool.fChan) <- f
 }
 
-func (pool *Pool) Release() {
+func (pool *FuncPool) Release() {
 	pool.closingChan <- struct{}{}
 	<-pool.closedChan
 }
 
-func (pool *Pool) Reload(number int) {
+func (pool *FuncPool) Reload(number int) {
 	pool.mu.Lock()
 	pool.numOfWorkers = int32(number)
 	pool.mu.Unlock()
 	pool.resizingChan <- struct{}{}
 }
 
-func (pool *Pool) startWorker() {
+func (pool *FuncPool) startWorker() {
 	w := &worker{
-		label:         pool.label,
-		task:          pool.task,
-		taskChan:      pool.taskChan,
-		taskQueueChan: make(chan interface{}),
-		log:           pool.log,
-		closingChan:   pool.workerClosingChan,
-		closedChan:    pool.workerClosedChan,
+		label:       pool.label,
+		fChan:       pool.fChan,
+		fQueueChan:  make(chan func()),
+		log:         pool.log,
+		closingChan: pool.workerClosingChan,
+		closedChan:  pool.workerClosedChan,
 	}
 	pool.mu.Lock()
-	pool.actualNumOfWorkers += 1
+	pool.actualNumOfWorkers++
 	pool.mu.Unlock()
 
 	go func() {
 	Loop:
 		for {
-			w.taskChan <- w.taskQueueChan
+			w.fChan <- w.fQueueChan
 			select {
-			case data := <-w.taskQueueChan:
-				w.launchTask(data)
+			case f := <-w.fQueueChan:
+				w.launchFunc(f)
 			case <-w.closingChan:
 				w.closedChan <- struct{}{}
 				break Loop
@@ -121,7 +105,7 @@ func (pool *Pool) startWorker() {
 	}()
 }
 
-func (w *worker) launchTask(data interface{}) {
+func (w *worker) launchFunc(f func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			var message string
@@ -136,24 +120,24 @@ func (w *worker) launchTask(data interface{}) {
 			w.log.EventErrKv(w.label+".pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
 		}
 	}()
-	w.task(data)
+	f()
 }
 
-func (pool *Pool) stopWorker() bool {
+func (pool *FuncPool) stopWorker() bool {
 	var result bool
 	pool.mu.Lock()
 	if 0 != pool.actualNumOfWorkers {
-		<-pool.taskChan
+		<-pool.fChan
 		pool.workerClosingChan <- struct{}{}
 		<-pool.workerClosedChan
-		pool.actualNumOfWorkers -= 1
+		pool.actualNumOfWorkers--
 		result = true
 	}
 	pool.mu.Unlock()
 	return result
 }
 
-func (pool *Pool) stopWorkers() {
+func (pool *FuncPool) stopWorkers() {
 	pool.mu.Lock()
 	pool.numOfWorkers = 0
 	pool.mu.Unlock()
@@ -161,7 +145,7 @@ func (pool *Pool) stopWorkers() {
 	}
 }
 
-func (pool *Pool) dispatcher(ctx context.Context) {
+func (pool *FuncPool) dispatcher(ctx context.Context) {
 	go func() {
 		pool.mu.Lock()
 		actualNumOfWorkers := pool.actualNumOfWorkers
