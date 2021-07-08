@@ -6,26 +6,19 @@ import (
 )
 
 const (
-	RunTimes   = 1000000
-	BenchParam = 10
+	RunTimes   = 1000
+	BenchParam = 1
 )
 
-type Demo struct {
-	r int
-}
-
-func (s *Demo) Do(data interface{}) {
-	time.Sleep(time.Duration(BenchParam) * time.Millisecond)
-}
-
 func BenchmarkConcurrent(b *testing.B) {
-	demo := &Demo{}
-	p := NewPool("bench1", 100, demo.Do, nil)
+	p := NewPool(100, nil)
 	defer p.Release()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < RunTimes; i++ {
-			p.Do(i)
+			p.Do(func() {
+				time.Sleep(time.Duration(BenchParam) * time.Millisecond)
+			})
 			i++
 		}
 	}

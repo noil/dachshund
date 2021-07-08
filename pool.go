@@ -3,64 +3,70 @@ package dachshund
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
 )
 
+const (
+	resize      = 1
+	enlarge     = 2
+	reduce      = 3
+	closeWorker = 4
+	closingPool = 5
+	closedPool  = 6
+)
+
+type System int
 type worker struct {
-	label         string
-	task          Task
-	taskChan      chan chan interface{}
-	taskQueueChan chan interface{}
-	f             func(func())
-	fChan         chan chan func()
-	fQueueChan    chan func()
-	log           EventReciever
-	closingChan   chan struct{}
-	closedChan    chan struct{}
+	callChan     chan func()
+	callPoolChan chan chan func()
+	log          EventReciever
 }
 
 type Pool struct {
-	label              string
-	task               Task
-	numOfWorkers       int32
-	actualNumOfWorkers int32
-	taskChan           chan chan interface{}
-	resizingChan       chan struct{}
-	closingChan        chan struct{}
-	closedChan         chan struct{}
-	workerClosingChan  chan struct{}
-	workerClosedChan   chan struct{}
-	log                EventReciever
-	mu                 sync.RWMutex
+	callChan            chan chan func()
+	countWorkers        int64
+	currentCountWorkers int64
+	system              chan System
+	log                 EventReciever
+	terminateWorker     int32
 }
 
-func NewPool(label string, number int, task Task, log EventReciever) *Pool {
-	return NewPoolWithContext(context.Background(), label, number, task, log)
+func NewPool(number int, log EventReciever) *Pool {
+	return NewPoolWithContext(context.Background(), number, log)
 }
 
-func NewPoolWithContext(ctx context.Context, label string, number int, task Task, log EventReciever) *Pool {
+func NewPoolWithContext(ctx context.Context, number int, log EventReciever) *Pool {
 	if log == nil {
 		log = nullReceiver
 	}
+
 	pool := &Pool{
-		label:             label,
-		task:              task,
-		numOfWorkers:      int32(number),
-		taskChan:          make(chan chan interface{}),
-		resizingChan:      make(chan struct{}),
-		closingChan:       make(chan struct{}),
-		closedChan:        make(chan struct{}),
-		workerClosingChan: make(chan struct{}),
-		workerClosedChan:  make(chan struct{}),
-		log:               log,
+		countWorkers: int64(number),
+		callChan:     make(chan chan func()),
+		system:       make(chan System),
+		log:          log,
 	}
 	pool.dispatcher(ctx)
 	return pool
 }
 
-func (pool *Pool) Do(data interface{}) {
+func (pool *Pool) Do(call func()) {
+	(<-pool.callChan) <- call
+}
+
+func (pool *Pool) Release() {
+	pool.system <- closingPool
+}
+
+func (pool *Pool) Resize(number int) {
+	atomic.StoreInt64(&pool.countWorkers, int64(number))
+	pool.system <- resize
+}
+
+func (w *worker) launch(call func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			var message string
@@ -72,132 +78,86 @@ func (pool *Pool) Do(data interface{}) {
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
-			kvs := make(map[string]string)
-			kvs["problem"] = message
-			pool.log.EventErrKv(pool.label+"pool.do.task.error", ErrSendOnClosedChannelPanic, kvs)
+			err := w.log.EventErrKv("dachshund: panic", ErrDoPanic, map[string]string{"error": message})
+			if err != nil {
+				panic(err)
+			}
 		}
 	}()
-	(<-pool.taskChan) <- data
-}
-
-func (pool *Pool) Release() {
-	pool.closingChan <- struct{}{}
-	<-pool.closedChan
-}
-
-func (pool *Pool) Reload(number int) {
-	pool.mu.Lock()
-	pool.numOfWorkers = int32(number)
-	pool.mu.Unlock()
-	pool.resizingChan <- struct{}{}
+	if call != nil {
+		call()
+	}
 }
 
 func (pool *Pool) startWorker() {
 	w := &worker{
-		label:         pool.label,
-		task:          pool.task,
-		taskChan:      pool.taskChan,
-		taskQueueChan: make(chan interface{}),
-		log:           pool.log,
-		closingChan:   pool.workerClosingChan,
-		closedChan:    pool.workerClosedChan,
+		callPoolChan: pool.callChan,
+		callChan:     make(chan func()),
+		log:          pool.log,
 	}
-	pool.mu.Lock()
-	pool.actualNumOfWorkers += 1
-	pool.mu.Unlock()
-
 	go func() {
+		defer func() {
+			atomic.StoreInt32(&pool.terminateWorker, 0)
+			pool.system <- reduce
+		}()
 	Loop:
 		for {
-			w.taskChan <- w.taskQueueChan
-			select {
-			case data := <-w.taskQueueChan:
-				w.launchTask(data)
-			case <-w.closingChan:
-				w.closedChan <- struct{}{}
+			w.callPoolChan <- w.callChan
+			data := <-w.callChan
+			if data == nil && atomic.LoadInt32(&pool.terminateWorker) == 1 {
 				break Loop
 			}
+			w.launch(data)
 		}
 	}()
+	pool.system <- enlarge
 }
 
-func (w *worker) launchTask(data interface{}) {
-	defer func() {
-		if r := recover(); r != nil {
-			var message string
-			switch x := r.(type) {
-			case string:
-				message = x
-			case error:
-				message = fmt.Sprintf("%+v", errors.WithStack(x))
-			default:
-				message = fmt.Sprintf("%+v", r)
-			}
-			w.log.EventErrKv(w.label+".pool.launch.task.error", ErrDoTaskPanic, map[string]string{"problem": message})
-		}
-	}()
-	w.task(data)
-}
-
-func (pool *Pool) stopWorker() bool {
-	var result bool
-	pool.mu.Lock()
-	if 0 != pool.actualNumOfWorkers {
-		<-pool.taskChan
-		pool.workerClosingChan <- struct{}{}
-		<-pool.workerClosedChan
-		pool.actualNumOfWorkers -= 1
-		result = true
-	}
-	pool.mu.Unlock()
-	return result
-}
-
-func (pool *Pool) stopWorkers() {
-	pool.mu.Lock()
-	pool.numOfWorkers = 0
-	pool.mu.Unlock()
-	for pool.stopWorker() {
-	}
+func (pool *Pool) stopWorker() {
+	atomic.StoreInt32(&pool.terminateWorker, 1)
+	pool.Do(nil)
 }
 
 func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
-		pool.mu.Lock()
-		actualNumOfWorkers := pool.actualNumOfWorkers
-		numOfWorkers := pool.numOfWorkers
-		pool.mu.Unlock()
-		for actualNumOfWorkers < numOfWorkers {
-			actualNumOfWorkers++
-			pool.startWorker()
-		}
+		tick := time.NewTicker(10 * time.Second)
 	Loop:
 		for {
 			select {
-			case <-pool.closingChan:
-				pool.stopWorkers()
-				pool.closedChan <- struct{}{}
-				break Loop
-			case <-ctx.Done():
-				pool.stopWorkers()
-				break Loop
-			case <-pool.resizingChan:
-				pool.mu.Lock()
-				actualNumOfWorkers := pool.actualNumOfWorkers
-				numOfWorkers := pool.numOfWorkers
-				pool.mu.Unlock()
-				for {
-					if actualNumOfWorkers < numOfWorkers {
-						actualNumOfWorkers++
-						pool.startWorker()
-					} else if actualNumOfWorkers > numOfWorkers {
-						actualNumOfWorkers--
-						pool.stopWorker()
-					} else {
-						break
+			case code := <-pool.system:
+				switch code {
+				case resize:
+					countWorkers := atomic.LoadInt64(&pool.countWorkers)
+					currentCountWorkers := atomic.LoadInt64(&pool.currentCountWorkers)
+					if currentCountWorkers < countWorkers {
+						go pool.startWorker()
 					}
+					if currentCountWorkers > countWorkers {
+						go pool.stopWorker()
+					}
+					if currentCountWorkers == 0 && countWorkers == 0 {
+						go func() { pool.system <- closedPool }()
+					}
+				case enlarge:
+					atomic.AddInt64(&pool.currentCountWorkers, 1)
+					go func() { pool.system <- resize }()
+				case reduce:
+					atomic.AddInt64(&pool.currentCountWorkers, -1)
+					go func() { pool.system <- resize }()
+				case closingPool:
+					atomic.StoreInt64(&pool.countWorkers, 0)
+					go func() { pool.system <- resize }()
+				case closedPool:
+					// close(pool.callPoolChan)
+					break Loop
 				}
+			case <-tick.C:
+				go func() { pool.system <- resize }()
+			case <-ctx.Done():
+				atomic.StoreInt64(&pool.countWorkers, 0)
+				go func() { pool.system <- resize }()
 			}
 		}
 	}()
+	pool.system <- resize
 }

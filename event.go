@@ -24,12 +24,12 @@ func (n *NullEventReceiver) Event(eventName string) {}
 func (n *NullEventReceiver) EventKv(eventName string, kvs map[string]string) {}
 
 // EventErr receives a notification of an error if one occurs
-func (n *NullEventReceiver) EventErr(eventName string, err error) error { return err }
+func (n *NullEventReceiver) EventErr(eventName string, err error) error { return nil }
 
 // EventErrKv receives a notification of an error if one occurs along with
 // optional key/value data
 func (n *NullEventReceiver) EventErrKv(eventName string, err error, kvs map[string]string) error {
-	return err
+	return nil
 }
 
 // Timing receives the time an event took to happen
