@@ -7,6 +7,11 @@ import (
 
 const defaultTube = "default"
 
+// DefaultTube returns default tube
+func DefaultTube() string {
+	return defaultTube
+}
+
 // Tuber interface for async jobs.
 type Tuber interface {
 	AsyncRun() func()
