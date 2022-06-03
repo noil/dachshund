@@ -3,6 +3,7 @@ package dachshund
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync/atomic"
 	"time"
 
@@ -20,32 +21,30 @@ const (
 
 type System int
 type worker struct {
-	callChan     chan func()
-	callPoolChan chan chan func()
-	log          EventReciever
+	jobChan     chan func()
+	jobPoolChan chan chan func()
+	log         log.Logger
 }
 
 type Pool struct {
-	callChan            chan chan func()
+	jobChan             chan chan func()
 	countWorkers        int64
 	currentCountWorkers int64
 	system              chan System
-	log                 EventReciever
+	log                 log.Logger
 	terminateWorker     int32
 }
 
-func NewPool(number int, log EventReciever) *Pool {
-	return NewPoolWithContext(context.Background(), number, log)
+// NewPool returns a Pool struct
+func NewPool(count int, log log.Logger) *Pool {
+	return NewPoolWithContext(context.Background(), count, log)
 }
 
-func NewPoolWithContext(ctx context.Context, number int, log EventReciever) *Pool {
-	if log == nil {
-		log = nullReceiver
-	}
-
+// NewPoolWithContext returns a Pool struct
+func NewPoolWithContext(ctx context.Context, count int, log log.Logger) *Pool {
 	pool := &Pool{
-		countWorkers: int64(number),
-		callChan:     make(chan chan func()),
+		countWorkers: int64(count),
+		jobChan:      make(chan chan func()),
 		system:       make(chan System),
 		log:          log,
 	}
@@ -53,20 +52,23 @@ func NewPoolWithContext(ctx context.Context, number int, log EventReciever) *Poo
 	return pool
 }
 
-func (pool *Pool) Do(call func()) {
-	(<-pool.callChan) <- call
+// Do launch async job
+func (pool *Pool) Do(job func()) {
+	(<-pool.jobChan) <- job
 }
 
+// Release shutdown a pool
 func (pool *Pool) Release() {
 	pool.system <- closingPool
 }
 
-func (pool *Pool) Resize(number int) {
-	atomic.StoreInt64(&pool.countWorkers, int64(number))
+// Resize resizes a pool
+func (pool *Pool) Resize(count int) {
+	atomic.StoreInt64(&pool.countWorkers, int64(count))
 	pool.system <- resize
 }
 
-func (w *worker) launch(call func()) {
+func (w *worker) launch(job func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			var message string
@@ -78,22 +80,19 @@ func (w *worker) launch(call func()) {
 			default:
 				message = fmt.Sprintf("%+v", r)
 			}
-			err := w.log.EventErrKv("dachshund: panic", ErrDoPanic, map[string]string{"error": message})
-			if err != nil {
-				panic(err)
-			}
+			w.log.Println("dachshund: panic", ErrDoPanic, map[string]string{"error": message})
 		}
 	}()
-	if call != nil {
-		call()
+	if job != nil {
+		job()
 	}
 }
 
 func (pool *Pool) startWorker() {
 	w := &worker{
-		callPoolChan: pool.callChan,
-		callChan:     make(chan func()),
-		log:          pool.log,
+		jobPoolChan: pool.jobChan,
+		jobChan:     make(chan func()),
+		log:         pool.log,
 	}
 	go func() {
 		defer func() {
@@ -102,8 +101,8 @@ func (pool *Pool) startWorker() {
 		}()
 	Loop:
 		for {
-			w.callPoolChan <- w.callChan
-			data := <-w.callChan
+			w.jobPoolChan <- w.jobChan
+			data := <-w.jobChan
 			if data == nil && atomic.LoadInt32(&pool.terminateWorker) == 1 {
 				break Loop
 			}
@@ -148,7 +147,7 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 					atomic.StoreInt64(&pool.countWorkers, 0)
 					go func() { pool.system <- resize }()
 				case closedPool:
-					// close(pool.callPoolChan)
+					// close(pool.jobPoolChan)
 					break Loop
 				}
 			case <-tick.C:

@@ -1,6 +1,7 @@
 package dachshund
 
 import (
+	"log"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ const (
 )
 
 func BenchmarkConcurrent(b *testing.B) {
-	p := NewPool(100, nil)
+	p := NewPool(100, *log.Default())
 	defer p.Release()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {

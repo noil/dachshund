@@ -1,6 +1,7 @@
 package dachshund
 
 import (
+	"log"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestNewPool(t *testing.T) {
-	pool := NewPool(10, nil)
+	pool := NewPool(10, *log.Default())
 	time.Sleep(1 * time.Second)
 	assert.Equal(t, int64(10), atomic.LoadInt64(&pool.currentCountWorkers), "they should by equal")
 
