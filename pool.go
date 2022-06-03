@@ -2,12 +2,8 @@ package dachshund
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"sync/atomic"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -21,9 +17,9 @@ const (
 
 type System int
 type worker struct {
-	jobChan     chan func()
-	jobPoolChan chan chan func()
-	log         log.Logger
+	jobChan      chan func()
+	jobPoolChan  chan chan func()
+	panicHandler func(any)
 }
 
 type Pool struct {
@@ -31,22 +27,34 @@ type Pool struct {
 	countWorkers        int64
 	currentCountWorkers int64
 	system              chan System
-	log                 log.Logger
 	terminateWorker     int32
+	panicHandler        func(any)
+}
+
+// Option enriches default behavior
+type Option func(*Pool)
+
+// Function to handle panics recovered
+func WithPanicHandler(handler func(any)) Option {
+	return func(p *Pool) {
+		p.panicHandler = handler
+	}
 }
 
 // NewPool returns a Pool struct
-func NewPool(count int, log log.Logger) *Pool {
-	return NewPoolWithContext(context.Background(), count, log)
+func NewPool(size int64, opts ...Option) *Pool {
+	return NewPoolWithContext(context.Background(), size, opts...)
 }
 
 // NewPoolWithContext returns a Pool struct
-func NewPoolWithContext(ctx context.Context, count int, log log.Logger) *Pool {
+func NewPoolWithContext(ctx context.Context, size int64, opts ...Option) *Pool {
 	pool := &Pool{
-		countWorkers: int64(count),
+		countWorkers: int64(size),
 		jobChan:      make(chan chan func()),
 		system:       make(chan System),
-		log:          log,
+	}
+	for _, opt := range opts {
+		opt(pool)
 	}
 	pool.dispatcher(ctx)
 	return pool
@@ -63,24 +71,15 @@ func (pool *Pool) Release() {
 }
 
 // Resize resizes a pool
-func (pool *Pool) Resize(count int) {
-	atomic.StoreInt64(&pool.countWorkers, int64(count))
+func (pool *Pool) Resize(size int64) {
+	atomic.StoreInt64(&pool.countWorkers, int64(size))
 	pool.system <- resize
 }
 
 func (w *worker) launch(job func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			var message string
-			switch x := r.(type) {
-			case string:
-				message = x
-			case error:
-				message = fmt.Sprintf("%+v", errors.WithStack(x))
-			default:
-				message = fmt.Sprintf("%+v", r)
-			}
-			w.log.Println("dachshund: panic", ErrDoPanic, map[string]string{"error": message})
+			w.panicHandler(r)
 		}
 	}()
 	if job != nil {
@@ -90,9 +89,9 @@ func (w *worker) launch(job func()) {
 
 func (pool *Pool) startWorker() {
 	w := &worker{
-		jobPoolChan: pool.jobChan,
-		jobChan:     make(chan func()),
-		log:         pool.log,
+		jobPoolChan:  pool.jobChan,
+		jobChan:      make(chan func()),
+		panicHandler: pool.panicHandler,
 	}
 	go func() {
 		defer func() {

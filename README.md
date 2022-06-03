@@ -42,7 +42,7 @@ func main() {
 		fmt.Println("Hello, World!")
 	}
 
-	pool := NewPool(10, *log.Default())
+	pool := NewPool(10)
 	defer pool.Release()
 	pool.Do(f)
 	time.Sleep(1 * time.Second)

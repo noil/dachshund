@@ -1,7 +1,7 @@
 package dachshund
 
 import (
-	"log"
+	"context"
 	"sync"
 )
 
@@ -14,27 +14,39 @@ type Tuber interface {
 
 // Queue helps to delimit the code logically. Each tube has its own pool
 type Queue struct {
-	log   log.Logger
+	opts  []Option
 	tubes map[string]*Pool
 	mu    sync.RWMutex
 }
 
 // NewQueue creates a new Queue
-func NewQueue(count int, log log.Logger) *Queue {
-	return &Queue{tubes: map[string]*Pool{
-		defaultTube: NewPool(count, log),
-	}}
+func NewQueue(size int64, opts ...Option) *Queue {
+	return NewQueueWithContext(context.Background(), size, opts...)
+}
+
+// NewQueue creates a new Queue
+func NewQueueWithContext(ctx context.Context, size int64, opts ...Option) *Queue {
+	return &Queue{
+		tubes: map[string]*Pool{
+			defaultTube: NewPoolWithContext(ctx, size, opts...),
+		},
+		opts: opts,
+	}
 }
 
 // Add adds a new one
-func (q *Queue) AddTube(tube string, size int) error {
+func (q *Queue) AddTube(tube string, size int64) error {
+	return q.AddTubeWithContext(context.Background(), tube, size)
+}
+
+func (q *Queue) AddTubeWithContext(ctx context.Context, tube string, size int64) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	_, ok := q.tubes[tube]
 	if ok {
 		return ErrTubeAlreadyExist
 	}
-	q.tubes[tube] = NewPool(size, q.log)
+	q.tubes[tube] = NewPoolWithContext(ctx, size, q.opts...)
 	return nil
 }
 
