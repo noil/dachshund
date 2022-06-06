@@ -7,19 +7,20 @@ import (
 )
 
 const (
-	resize      = 1
-	enlarge     = 2
-	reduce      = 3
-	closeWorker = 4
-	closingPool = 5
-	closedPool  = 6
+	resize = iota + 1
+	enlarge
+	reduce
+	closeWorker
+	closingPool
+	closedPool
 )
 
 type System int
 type worker struct {
-	jobChan      chan func()
-	jobPoolChan  chan chan func()
-	panicHandler func(any)
+	jobChan       chan func()
+	jobPoolChan   chan chan func()
+	terminateChan chan struct{}
+	panicHandler  func(any)
 }
 
 type Pool struct {
@@ -27,7 +28,7 @@ type Pool struct {
 	countWorkers        int64
 	currentCountWorkers int64
 	system              chan System
-	terminateWorker     int32
+	terminateWorkerChan chan struct{}
 	panicHandler        func(any)
 }
 
@@ -49,9 +50,10 @@ func NewPool(size int64, opts ...Option) *Pool {
 // NewPoolWithContext returns a Pool struct
 func NewPoolWithContext(ctx context.Context, size int64, opts ...Option) *Pool {
 	pool := &Pool{
-		countWorkers: int64(size),
-		jobChan:      make(chan chan func()),
-		system:       make(chan System),
+		countWorkers:        int64(size),
+		jobChan:             make(chan chan func()),
+		system:              make(chan System),
+		terminateWorkerChan: make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(pool)
@@ -89,31 +91,36 @@ func (w *worker) launch(job func()) {
 
 func (pool *Pool) startWorker() {
 	w := &worker{
-		jobPoolChan:  pool.jobChan,
-		jobChan:      make(chan func()),
-		panicHandler: pool.panicHandler,
+		jobPoolChan:   pool.jobChan,
+		terminateChan: pool.terminateWorkerChan,
+		jobChan:       make(chan func()),
+		panicHandler:  pool.panicHandler,
 	}
 	go func() {
 		defer func() {
-			atomic.StoreInt32(&pool.terminateWorker, 0)
 			pool.system <- reduce
 		}()
 	Loop:
 		for {
-			w.jobPoolChan <- w.jobChan
-			data := <-w.jobChan
-			if data == nil && atomic.LoadInt32(&pool.terminateWorker) == 1 {
+			select {
+			case <-w.terminateChan:
+				if pool.jobChan == w.jobPoolChan {
+					pool.terminateWorkerChan <- struct{}{}
+					break
+				}
+				close(w.jobChan)
 				break Loop
+			case w.jobPoolChan <- w.jobChan:
+			case data := <-w.jobChan:
+				w.launch(data)
 			}
-			w.launch(data)
 		}
 	}()
 	pool.system <- enlarge
 }
 
 func (pool *Pool) stopWorker() {
-	atomic.StoreInt32(&pool.terminateWorker, 1)
-	pool.Do(nil)
+	pool.terminateWorkerChan <- struct{}{}
 }
 
 func (pool *Pool) dispatcher(ctx context.Context) {
@@ -146,7 +153,8 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 					atomic.StoreInt64(&pool.countWorkers, 0)
 					go func() { pool.system <- resize }()
 				case closedPool:
-					// close(pool.jobPoolChan)
+					close(pool.jobChan)
+					close(pool.system)
 					break Loop
 				}
 			case <-tick.C:
