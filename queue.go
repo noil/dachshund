@@ -4,13 +4,6 @@ import (
 	"context"
 )
 
-const defaultTube = "default"
-
-// DefaultTube returns default tube
-func DefaultTube() string {
-	return defaultTube
-}
-
 // Tuber interface for async jobs.
 type Tuber interface {
 	AsyncRun() func()
@@ -24,16 +17,14 @@ type Queue struct {
 
 // NewQueue creates a new Queue
 func NewQueue(size int64, opts ...Option) *Queue {
-	return NewQueueWithContext(context.Background(), size, opts...)
+	return NewQueueWithContext(context.Background(), opts...)
 }
 
 // NewQueue creates a new Queue
-func NewQueueWithContext(ctx context.Context, size int64, opts ...Option) *Queue {
+func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 	return &Queue{
-		tubes: map[string]*Tube{
-			defaultTube: initTube(ctx, size, opts...),
-		},
-		opts: opts,
+		tubes: map[string]*Tube{},
+		opts:  opts,
 	}
 }
 
