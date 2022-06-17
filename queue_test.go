@@ -43,7 +43,7 @@ func TestQueueFunc(t *testing.T) {
 
 	for _, test := range cases {
 		t.Run(test.Name, func(t *testing.T) {
-			q := NewQueue(10)
+			q := NewQueue()
 			for i := 0; i < test.CountTubes; i++ {
 				q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
 			}
@@ -91,7 +91,7 @@ func TestQueuePush(t *testing.T) {
 
 	for _, test := range cases {
 		t.Run(test.Name, func(t *testing.T) {
-			q := NewQueue(10)
+			q := NewQueue()
 			for i := 0; i < test.CountTubes; i++ {
 				q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
 			}

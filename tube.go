@@ -41,7 +41,6 @@ Loop:
 }
 
 func (t *Tube) shutdowning() {
-	atomic.StoreInt32(&t.closed, 1)
 	go func() {
 		for job := range t.job {
 			t.pool.Do(job)
@@ -54,6 +53,6 @@ func (t *Tube) shutdowning() {
 	t.pool.Release()
 }
 
-func (t *Tube) isClosed() bool {
-	return atomic.LoadInt32(&t.closed) == 1
+func (t *Tube) Close() bool {
+	return atomic.CompareAndSwapInt32(&t.closed, 0, 1)
 }

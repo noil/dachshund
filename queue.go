@@ -16,7 +16,7 @@ type Queue struct {
 }
 
 // NewQueue creates a new Queue
-func NewQueue(size int64, opts ...Option) *Queue {
+func NewQueue(opts ...Option) *Queue {
 	return NewQueueWithContext(context.Background(), opts...)
 }
 
@@ -31,7 +31,7 @@ func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 // Terminate deletes all tubes
 func (q *Queue) Terminate() error {
 	for key, t := range q.tubes {
-		if !t.isClosed() {
+		if t.Close() {
 			t.stop <- struct{}{}
 		}
 		delete(q.tubes, key)
@@ -54,13 +54,15 @@ func (q *Queue) AddTubeWithContext(ctx context.Context, tube string, size int64)
 	return nil
 }
 
-// Terminate remove a tube
+// TerminateTube remove a tube
 func (q *Queue) TerminateTube(tube string) error {
 	t, ok := q.tubes[tube]
 	if !ok {
 		return ErrTubeNotFound
 	}
-	t.shutdowning()
+	if t.Close() {
+		t.stop <- struct{}{}
+	}
 	delete(q.tubes, tube)
 	return nil
 }
@@ -71,7 +73,7 @@ func (q *Queue) PushFunc(tube string, job func()) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	if t.isClosed() {
+	if !t.Close() {
 		return ErrTubeClosed
 	}
 	go func() {
@@ -87,7 +89,7 @@ func (q *Queue) Push(tube string, job Tuber) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	if t.isClosed() {
+	if !t.Close() {
 		return ErrTubeClosed
 	}
 	go func() {
