@@ -59,12 +59,11 @@ func (t *Tube) IsClosed() bool {
 	return t.closed
 }
 
-func (t *Tube) TryClosing() bool {
+func (t *Tube) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.closed {
 		t.closed = true
-		return true
+		t.stop <- struct{}{}
 	}
-	return false
 }
