@@ -30,10 +30,11 @@ func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 
 // Terminate deletes all tubes
 func (q *Queue) Terminate() error {
-	for key, t := range q.tubes {
+	for _, t := range q.tubes {
 		t.Close()
-		delete(q.tubes, key)
 	}
+	q.tubes = map[string]*Tube{}
+
 	return nil
 }
 

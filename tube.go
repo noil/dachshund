@@ -30,8 +30,9 @@ Loop:
 	for {
 		select {
 		case <-t.stop:
-		case <-ctx.Done():
 			break Loop
+		case <-ctx.Done():
+			t.Close()
 		case job := <-t.job:
 			t.pool.Do(job)
 			t.wg.Done()
