@@ -31,7 +31,7 @@ func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 // Terminate deletes all tubes
 func (q *Queue) Terminate() error {
 	for _, t := range q.tubes {
-		t.Close()
+		t.Terminate()
 	}
 	q.tubes = map[string]*Tube{}
 
@@ -59,7 +59,7 @@ func (q *Queue) TerminateTube(tube string) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	t.Close()
+	t.Terminate()
 	delete(q.tubes, tube)
 	return nil
 }

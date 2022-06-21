@@ -33,6 +33,7 @@ Loop:
 			break Loop
 		case <-ctx.Done():
 			t.Close()
+			break Loop
 		case job := <-t.job:
 			t.pool.Do(job)
 			t.wg.Done()
@@ -60,11 +61,19 @@ func (t *Tube) IsClosed() bool {
 	return t.closed
 }
 
-func (t *Tube) Close() {
+func (t *Tube) Close() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.closed {
-		t.closed = true
+	if t.closed == true {
+		return false
+	}
+	t.closed = true
+
+	return true
+}
+
+func (t *Tube) Terminate() {
+	if t.Close() {
 		t.stop <- struct{}{}
 	}
 }
