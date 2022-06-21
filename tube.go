@@ -3,7 +3,6 @@ package dachshund
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 )
 
 type Tube struct {
@@ -11,7 +10,8 @@ type Tube struct {
 	job    chan func()
 	stop   chan struct{}
 	wg     sync.WaitGroup
-	closed int32
+	mu     sync.RWMutex
+	closed bool
 }
 
 func initTube(ctx context.Context, size int64, opts ...Option) *Tube {
@@ -54,9 +54,17 @@ func (t *Tube) shutdowning() {
 }
 
 func (t *Tube) IsClosed() bool {
-	return atomic.LoadInt32(&t.closed) == 1
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.closed
 }
 
-func (t *Tube) Close() bool {
-	return atomic.CompareAndSwapInt32(&t.closed, 0, 1)
+func (t *Tube) TryClosing() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.closed {
+		t.closed = true
+		return true
+	}
+	return false
 }

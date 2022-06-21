@@ -31,7 +31,7 @@ func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 // Terminate deletes all tubes
 func (q *Queue) Terminate() error {
 	for key, t := range q.tubes {
-		if t.Close() {
+		if t.TryClosing() {
 			t.stop <- struct{}{}
 		}
 		delete(q.tubes, key)
@@ -60,7 +60,7 @@ func (q *Queue) TerminateTube(tube string) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	if t.Close() {
+	if t.TryClosing() {
 		t.stop <- struct{}{}
 	}
 	delete(q.tubes, tube)
