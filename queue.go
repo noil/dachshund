@@ -73,7 +73,7 @@ func (q *Queue) PushFunc(tube string, job func()) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	if !t.Close() {
+	if t.IsClosed() {
 		return ErrTubeClosed
 	}
 	go func() {
@@ -89,7 +89,7 @@ func (q *Queue) Push(tube string, job Tuber) error {
 	if !ok {
 		return ErrTubeNotFound
 	}
-	if !t.Close() {
+	if t.IsClosed() {
 		return ErrTubeClosed
 	}
 	go func() {

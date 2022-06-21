@@ -53,6 +53,10 @@ func (t *Tube) shutdowning() {
 	t.pool.Release()
 }
 
+func (t *Tube) IsClosed() bool {
+	return atomic.LoadInt32(&t.closed) == 1
+}
+
 func (t *Tube) Close() bool {
 	return atomic.CompareAndSwapInt32(&t.closed, 0, 1)
 }
