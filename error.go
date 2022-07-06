@@ -8,4 +8,5 @@ var (
 	ErrTubeAlreadyExist         = errors.New("dachshund: tube already exists")
 	ErrTubeNotFound             = errors.New("dachshund: tube not found")
 	ErrTubeClosed               = errors.New("dachshund: tube closed")
+	ErrQueueClosed              = errors.New("dachshund: queue closed")
 )

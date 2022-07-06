@@ -2,6 +2,7 @@ package dachshund
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,8 +43,14 @@ func TestResize(t *testing.T) {
 
 func TestDoWithPanicHandler(t *testing.T) {
 	size := int64(10)
-	var message string
+	var (
+		message string
+		mu      sync.RWMutex
+	)
 	pool := NewPool(size, WithPanicHandler(func(r any) {
+
+		mu.Lock()
+		defer mu.Unlock()
 		message = fmt.Sprintf(`%v`, r)
 	}))
 
@@ -52,6 +59,8 @@ func TestDoWithPanicHandler(t *testing.T) {
 	})
 
 	time.Sleep(1 * time.Second)
+	mu.RLock()
+	defer mu.RUnlock()
 	assert.Equal(t, "foo", message)
 }
 
@@ -62,12 +71,16 @@ func TestDo(t *testing.T) {
 	pool := NewPool(size)
 	go func() {
 		defer close(sum)
+		var wg sync.WaitGroup
+		wg.Add(100000)
 		for i := 0; i < 100000; i++ {
-			j := i
+			i := i
 			pool.Do(func() {
-				sum <- j
+				sum <- i
+				wg.Done()
 			})
 		}
+		wg.Wait()
 	}()
 	result := 0
 	for i := range sum {

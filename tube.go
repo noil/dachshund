@@ -1,79 +1,55 @@
 package dachshund
 
 import (
-	"context"
 	"sync"
+	"sync/atomic"
 )
 
 type Tube struct {
-	pool   *Pool
-	job    chan func()
-	stop   chan struct{}
-	wg     sync.WaitGroup
-	mu     sync.RWMutex
-	closed bool
+	pool            *Pool
+	job             chan func()
+	countActiveJobs int64
+	stop            chan struct{}
+	mu              sync.RWMutex
+	closed          bool
 }
 
-func initTube(ctx context.Context, size int64, opts ...Option) *Tube {
+func initTube(size int64, opts ...Option) *Tube {
 	t := &Tube{
 		pool: NewPool(size, opts...),
 		job:  make(chan func()),
 		stop: make(chan struct{}),
 	}
-	go t.launch(ctx)
+	go t.launch()
 
 	return t
 }
 
-func (t *Tube) launch(ctx context.Context) {
+func (t *Tube) launch() {
 Loop:
 	for {
 		select {
 		case <-t.stop:
 			break Loop
-		case <-ctx.Done():
-			t.Close()
-			break Loop
 		case job := <-t.job:
 			t.pool.Do(job)
-			t.wg.Done()
+			t.dec()
 		}
 	}
-	t.shutdowning()
 }
 
-func (t *Tube) shutdowning() {
-	go func() {
-		for job := range t.job {
-			t.pool.Do(job)
-			t.wg.Done()
-		}
-	}()
-	t.wg.Wait()
-	close(t.job)
-	close(t.stop)
-	t.pool.Release()
+func (t *Tube) inc() {
+	atomic.AddInt64(&t.countActiveJobs, 1)
 }
 
-func (t *Tube) IsClosed() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.closed
-}
-
-func (t *Tube) Close() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.closed == true {
-		return false
-	}
-	t.closed = true
-
-	return true
+func (t *Tube) dec() {
+	atomic.AddInt64(&t.countActiveJobs, -1)
 }
 
 func (t *Tube) Terminate() {
-	if t.Close() {
-		t.stop <- struct{}{}
+	t.closed = true
+
+	for atomic.LoadInt64(&t.countActiveJobs) > 0 {
 	}
+	t.stop <- struct{}{}
 }

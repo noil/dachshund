@@ -45,7 +45,8 @@ func TestQueueFunc(t *testing.T) {
 		t.Run(test.Name, func(t *testing.T) {
 			q := NewQueue()
 			for i := 0; i < test.CountTubes; i++ {
-				q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
+				err := q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
+				assert.NoError(t, err)
 			}
 			err := q.PushFunc(test.ActiveTube, test.Func)
 			assert.Equal(t, test.ExpectedErr, err)
@@ -93,7 +94,8 @@ func TestQueuePush(t *testing.T) {
 		t.Run(test.Name, func(t *testing.T) {
 			q := NewQueue()
 			for i := 0; i < test.CountTubes; i++ {
-				q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
+				err := q.AddTube(fmt.Sprintf(`tube_%d`, i), 10)
+				assert.NoError(t, err)
 			}
 			err := q.Push(test.ActiveTube, test.Person)
 			assert.Equal(t, test.ExpectedErr, err)
