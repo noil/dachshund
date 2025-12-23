@@ -52,7 +52,7 @@ func NewPoolWithContext(ctx context.Context, size int64, opts ...Option) *Pool {
 	pool := &Pool{
 		countWorkers:        int64(size),
 		jobChan:             make(chan chan func()),
-		system:              make(chan System),
+		system:              make(chan System, 1000),
 		terminateWorkerChan: make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -69,13 +69,20 @@ func (pool *Pool) Do(job func()) {
 
 // Release shutdown a pool
 func (pool *Pool) Release() {
-	pool.system <- closingPool
+	pool.sendSystemSignal(closingPool)
 }
 
 // Resize resizes a pool
 func (pool *Pool) Resize(size int64) {
 	atomic.StoreInt64(&pool.countWorkers, int64(size))
-	pool.system <- resize
+	pool.sendSystemSignal(resize)
+}
+
+func (pool *Pool) sendSystemSignal(sig System) {
+	defer func() {
+		recover()
+	}()
+	pool.system <- sig
 }
 
 func (w *worker) launch(job func()) {
@@ -98,16 +105,13 @@ func (pool *Pool) startWorker() {
 	}
 	go func() {
 		defer func() {
-			pool.system <- reduce
+			recover()
+			pool.sendSystemSignal(reduce)
 		}()
 	Loop:
 		for {
 			select {
 			case <-w.terminateChan:
-				if pool.jobChan == w.jobPoolChan {
-					pool.terminateWorkerChan <- struct{}{}
-					break
-				}
 				close(w.jobChan)
 				break Loop
 			case w.jobPoolChan <- w.jobChan:
@@ -116,7 +120,7 @@ func (pool *Pool) startWorker() {
 			}
 		}
 	}()
-	pool.system <- enlarge
+	pool.sendSystemSignal(enlarge)
 }
 
 func (pool *Pool) stopWorker() {
@@ -126,7 +130,7 @@ func (pool *Pool) stopWorker() {
 func (pool *Pool) dispatcher(ctx context.Context) {
 	go func() {
 		tick := time.NewTicker(10 * time.Second)
-	Loop:
+		defer tick.Stop()
 		for {
 			select {
 			case code := <-pool.system:
@@ -141,29 +145,29 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 						go pool.stopWorker()
 					}
 					if currentCountWorkers == 0 && countWorkers == 0 {
-						go func() { pool.system <- closedPool }()
+						go pool.sendSystemSignal(closedPool)
 					}
 				case enlarge:
 					atomic.AddInt64(&pool.currentCountWorkers, 1)
-					go func() { pool.system <- resize }()
+					go pool.sendSystemSignal(resize)
 				case reduce:
 					atomic.AddInt64(&pool.currentCountWorkers, -1)
-					go func() { pool.system <- resize }()
+					go pool.sendSystemSignal(resize)
 				case closingPool:
 					atomic.StoreInt64(&pool.countWorkers, 0)
-					go func() { pool.system <- resize }()
+					go pool.sendSystemSignal(resize)
 				case closedPool:
 					close(pool.jobChan)
 					close(pool.system)
-					break Loop
+					return
 				}
 			case <-tick.C:
-				go func() { pool.system <- resize }()
+				pool.sendSystemSignal(resize)
 			case <-ctx.Done():
 				atomic.StoreInt64(&pool.countWorkers, 0)
-				go func() { pool.system <- resize }()
+				pool.sendSystemSignal(resize)
 			}
 		}
 	}()
-	pool.system <- resize
+	pool.sendSystemSignal(resize)
 }
