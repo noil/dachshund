@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-var mu sync.Mutex
-
 // Tuber interface for async jobs.
 type Tuber interface {
 	AsyncRun() func()
@@ -17,6 +15,7 @@ type Queue struct {
 	opts   []Option
 	tubes  map[string]*Tube
 	closed bool
+	mu     sync.RWMutex
 }
 
 // NewQueue creates a new Queue
@@ -27,7 +26,7 @@ func NewQueue(opts ...Option) *Queue {
 	}
 }
 
-// NewQueue creates a new Queue
+// NewQueueWithContext creates a new Queue
 func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 	queue := &Queue{
 		tubes: map[string]*Tube{},
@@ -42,8 +41,12 @@ func NewQueueWithContext(ctx context.Context, opts ...Option) *Queue {
 
 // Terminate deletes all tubes
 func (q *Queue) Terminate() {
-	mu.Lock()
-	defer mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return
+	}
 
 	q.closed = true
 	for _, t := range q.tubes {
@@ -57,8 +60,8 @@ func (q *Queue) Terminate() {
 
 // AddTube adds a new one
 func (q *Queue) AddTube(tube string, size int64) error {
-	mu.Lock()
-	defer mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	if q.closed {
 		return ErrQueueClosed
@@ -73,8 +76,8 @@ func (q *Queue) AddTube(tube string, size int64) error {
 
 // TerminateTube remove a tube
 func (q *Queue) TerminateTube(tube string) {
-	mu.Lock()
-	defer mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	t, ok := q.tubes[tube]
 	if !ok {
@@ -89,8 +92,8 @@ func (q *Queue) TerminateTube(tube string) {
 
 // PushFunc runs a func in a specific tube, or returns error if tune not found
 func (q *Queue) PushFunc(tube string, job func()) error {
-	mu.Lock()
-	defer mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 
 	if q.closed {
 		return ErrTubeClosed
@@ -102,8 +105,13 @@ func (q *Queue) PushFunc(tube string, job func()) error {
 	if t.closed {
 		return ErrTubeClosed
 	}
+	t.inc()
 	go func() {
-		t.inc()
+		defer func() {
+			if recover() != nil {
+				t.dec()
+			}
+		}()
 		t.job <- job
 	}()
 	return nil
@@ -111,8 +119,8 @@ func (q *Queue) PushFunc(tube string, job func()) error {
 
 // Push runs a struct task called AsyncRun() in a specific tube, or returns error if tune not found
 func (q *Queue) Push(tube string, job Tuber) error {
-	mu.Lock()
-	defer mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 
 	if q.closed {
 		return ErrTubeClosed
@@ -124,8 +132,13 @@ func (q *Queue) Push(tube string, job Tuber) error {
 	if t.closed {
 		return ErrTubeClosed
 	}
+	t.inc()
 	go func() {
-		t.inc()
+		defer func() {
+			if recover() != nil {
+				t.dec()
+			}
+		}()
 		t.job <- job.AsyncRun()
 	}()
 	return nil

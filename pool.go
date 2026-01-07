@@ -2,6 +2,7 @@ package dachshund
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -29,7 +30,10 @@ type Pool struct {
 	currentCountWorkers int64
 	system              chan System
 	terminateWorkerChan chan struct{}
+	closeChan           chan struct{}
 	panicHandler        func(any)
+	mu                  sync.RWMutex
+	closed              bool
 }
 
 // Option enriches default behavior
@@ -54,6 +58,7 @@ func NewPoolWithContext(ctx context.Context, size int64, opts ...Option) *Pool {
 		jobChan:             make(chan chan func()),
 		system:              make(chan System, 1000),
 		terminateWorkerChan: make(chan struct{}),
+		closeChan:           make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(pool)
@@ -64,7 +69,15 @@ func NewPoolWithContext(ctx context.Context, size int64, opts ...Option) *Pool {
 
 // Do launch async job
 func (pool *Pool) Do(job func()) {
-	(<-pool.jobChan) <- job
+	defer func() {
+		recover()
+	}()
+	select {
+	case <-pool.closeChan:
+		return
+	case workerChan := <-pool.jobChan:
+		workerChan <- job
+	}
 }
 
 // Release shutdown a pool
@@ -79,7 +92,13 @@ func (pool *Pool) Resize(size int64) {
 }
 
 func (pool *Pool) sendSystemSignal(sig System) {
+	pool.mu.RLock()
+	if pool.closed {
+		pool.mu.RUnlock()
+		return
+	}
 	defer func() {
+		pool.mu.RUnlock()
 		recover()
 	}()
 	pool.system <- sig
@@ -111,11 +130,12 @@ func (pool *Pool) startWorker() {
 	Loop:
 		for {
 			select {
+			case <-pool.closeChan:
+				break Loop
 			case <-w.terminateChan:
-				close(w.jobChan)
 				break Loop
 			case w.jobPoolChan <- w.jobChan:
-			case data := <-w.jobChan:
+				data := <-w.jobChan
 				w.launch(data)
 			}
 		}
@@ -157,8 +177,11 @@ func (pool *Pool) dispatcher(ctx context.Context) {
 					atomic.StoreInt64(&pool.countWorkers, 0)
 					go pool.sendSystemSignal(resize)
 				case closedPool:
-					close(pool.jobChan)
+					pool.mu.Lock()
+					pool.closed = true
+					close(pool.closeChan)
 					close(pool.system)
+					pool.mu.Unlock()
 					return
 				}
 			case <-tick.C:
